@@ -164,7 +164,7 @@ sampling distribution is inherited from the separate sampler tests.
    by assumption.
 5. **Parameter scope.** The validator covers the single Protocol 1 theorem’s
    arithmetic conditions. It is not the Section 5 or Section 6 parameter
-   validator. Previously discussed `phi1=phi2=4`, `d=256`, `m=13`, `B=1`, and
+   validator. The Section 6.1 profile uses `phi1=phi2=22`, `d=256`, `m=13`, `B=1`, and
    `v=k beta` are provisional profiles, not finalized production parameters.
 6. **Test boundary coverage.** Current negative and edge coverage is useful but
    does not cover each norm exactly at its inclusive boundary or all malformed

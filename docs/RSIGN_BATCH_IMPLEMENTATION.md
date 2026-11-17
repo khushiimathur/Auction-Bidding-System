@@ -9,6 +9,10 @@ satisfying `(2d/k')^r >= 2^lambda`, using exact integer comparisons rather
 than floating-point logarithms. The six Table 3 rows are covered by the
 focused test. Callers must configure the hash output count with the chosen `r`.
 
+Section 6.1 uses literal `phi1=phi2=22`. Earlier project notes misread 22 as
+`2^2=4`; `mu(22)^2≈2.983` (versus `mu(4)^2≈429.448`) matches the paper's
+stated acceptance rate above `1/3` and about three expected RSign iterations.
+
 Signing creates all first-message states for one attempt, encodes the complete
 commitment transcript, derives the challenge vector, and computes the
 challenge-dependent `f` lifts. It makes one rejection-provider call for the

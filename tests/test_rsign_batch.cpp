@@ -3,6 +3,7 @@
 #include "lattice_lrs/proofs/binary_proof.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -459,6 +460,14 @@ void test_repetition_count() {
             "repetition count must use the least integer satisfying the bound");
 }
 
+void test_section6_phi22_rejection_factor() {
+    constexpr double phi = 22.0;
+    const double mu = std::exp(12.0 / phi + 1.0 / (2.0 * phi * phi));
+    const double two_stage_mu = mu * mu;
+    require(two_stage_mu > 2.9 && two_stage_mu < 3.0,
+            "Section 6.1 phi=22 must give mu(phi)^2 in (2.9, 3.0)");
+}
+
 void test_batch_restart_global_rejections_and_verification() {
     ZeroByteSource random;
     TestContext context = make_context(random);
@@ -866,6 +875,7 @@ void test_exact_ds_provider_adapter() {
 int main() {
     try {
         test_repetition_count();
+        test_section6_phi22_rejection_factor();
         test_batch_restart_global_rejections_and_verification();
         test_transcript_binding_for_all_inputs();
         test_exact_z_and_center_ordering();

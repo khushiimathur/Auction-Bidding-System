@@ -589,7 +589,7 @@ permits.
 | `k'` | `max(2,k)` in the proof soundness bound, since binary subproof needs three transcripts even at `k=1`. One-run error is `k'/(2d)`. |
 | `r` | Repetition count, chosen as `ceil(lambda / log2(2d/k'))` to make the repeated soundness error at most `2^-lambda`; compare with Appendix D's formula and Table 3 rounding. |
 | `B` | Coefficient bound for secrets/opening randomness, set to `1`; coefficients are uniform in `{-1,0,1}` (`S_B`). |
-| `phi1,phi2` | Section 6.1 notation requires verification: “22” conflicts with the existing `2^2=4` transcription. Do not select either as a production value. |
+| `phi1,phi2` | Both are 22, literal (Section 6.1). Earlier notes misread 22 as `2^2=4`; `mu(22)^2≈2.983` versus `mu(4)^2≈429.448` matches the paper's stated acceptance and iteration claims. |
 | `T1,T'` | Required commitment binding bounds from Theorem 3 and the repeated protocol; depend on `d,k,beta,r,B,phi1,phi2` and the extraction bound `B_{d,k}`. Must use the paper's formulas, not choose independently. |
 | `delta` | Root Hermite factor used in both M-SIS and M-LWE estimates; paper targets at most `1.0045`. |
 
@@ -812,18 +812,15 @@ Sections 2–5 and Appendix E supply the assumptions and proof bounds.
 | Signature size | 774 KB | Table 3, p. 21, rounded figure. It depends on the paper's encoding/size calculation and is not a byte-exact serialization specification. |
 | `v` | 16 | Appendix D, Table 4, p. 24 gives commitment-key dimension `n x (m+k*beta)`; hence `v=k*beta=2*8=16`. |
 | `B` | 1 | Section 6.1, p. 20. Fresh secret/opening coefficients are sampled uniformly from `{-1,0,1}`. |
-| `phi1,phi2` | Requires verification | Existing notes read `2^2=4`; this review raises “22”. These are rejection-sampling controls, but the value must not be selected until the source notation is resolved. |
+| `phi1,phi2` | 22, 22 | Literal Section 6.1 value; see the correction note in the parameter table above. |
 
-All Table 3 values above except `phi1,phi2` are transcribed as listed. The
-exact modulus and exact enumerated Method 2 value `B_{d,k}` are not printed as
-exact numbers in Tables 3–4.
+The exact modulus and exact enumerated Method 2 value `B_{d,k}` are not printed
+as exact numbers in Tables 3–4.
 
 ### B. Relationships and derived values
 
 The following illustrative calculations use `B=1`, the selected row, and
-the prior provisional interpretation `phi1=phi2=4`. Values that depend on
-`phi1` or `phi2` are conditional only and are not confirmed as the paper's
-parameter calculations.
+`phi1=phi2=22`.
 
 #### Ring size and dimensions
 
@@ -868,9 +865,8 @@ separate from computational security under M-SIS/M-LWE.
 
 - `B=1`: coefficient box `[-1,1]` for fresh secret/opening randomness, as
   stated in Section 6.1, p. 20.
-- The Section 6.1 rejection-parameter notation remains unresolved. The
-  `phi1=phi2=4` calculations in this document are provisional, not verified
-  paper values; see `PQ_LRS_DEVIATIONS_AND_SECURITY_NOTES.md`.
+- `phi1=phi2=22`: Section 6.1's literal value; the preceding parameter table
+  records the correction to the earlier `2^2=4` misreading.
 - The commitment key is generated as in Section 2.2, p. 6:
   `G'_r <- R_q^{n x (m-n)}`, `G_m <- R_q^{n x v}` independently uniform;
   `G=[I_n | G'_r | G_m]`. Here the shapes are `5x8`, `5x16`, and `5x29`.
@@ -941,12 +937,12 @@ Theorem 2 (Protocol 2, p. 17) gives the single-run condition
 \[
 q>(10\phi_1d\sqrt{dk(\beta-1)}+2)^2.
 \]
-Substitution gives
+With the corrected `phi1=22`, substitution gives
 \[
-q>(10\cdot4\cdot256\sqrt{256\cdot2\cdot7}+2)^2
- \approx375,812,090,536.585,
+q>(10\cdot22\cdot256\sqrt{256\cdot2\cdot7}+2)^2
+ \approx11,368,255,048,333.219,
 \]
-so an integer `q` must be at least `375,812,090,537` for that single-run
+so an integer `q` must be at least `11,368,255,048,334` for that single-run
 condition.
 
 Section 6, Assumption 1, p. 19, strengthens this for the `r`-repeated
@@ -954,12 +950,12 @@ signature:
 \[
 q>(10\phi_1d\sqrt{dkr(\beta-1)}+2)^2.
 \]
-Substitution gives
+With `phi1=22`, substitution gives
 \[
-q>(10\cdot4\cdot256\sqrt{256\cdot2\cdot16\cdot7}+2)^2
- \approx6,012,964,022,934.341,
+q>(10\cdot22\cdot256\sqrt{256\cdot2\cdot16\cdot7}+2)^2
+ \approx181,891,918,932,520.88,
 \]
-so the integer condition is `q >= 6,012,964,022,935` before imposing oddness.
+so the integer condition is `q >= 181,891,918,932,521` before imposing oddness.
 This also dominates the single-run condition.
 
 The M-SIS condition from Section 6.1, Eq. (11), p. 20 and Appendix C,
@@ -970,16 +966,16 @@ Eq. (12), p. 24 is
 >\max\left\{2T_1,
 2\cdot24\sqrt{3r}\,Bmd(k+1)B'_{d,k}\right\}.
 \]
-Using the rigorous conservative `B'<=65,536`, the RHS is
-`217,593,721,025.4225` (log2 ≈ `37.66285`). The `q` member of the minimum
+Using the rigorous conservative `B'<=65,536`, `phi1=phi2=22`, and an integer
+upper bound for `T1`, the RHS is at most `223,703,481,730`. The `q` member of the minimum
 must exceed that value; the lattice-reduction member requires
 \[
-\log_2(q)>\frac{(\log_2(217,593,721,025.4225))^2}
- {4(1280)\log_2(1.0045)}\approx42.77052585624,
+\log_2(q)>\frac{(\log_2(223,703,481,730))^2}
+ {4(1280)\log_2(1.0045)}\approx42.86131147151,
 \]
-or `q > 7,502,589,985,959.78`. Combined with the repeated protocol bound,
+or `q > 7,989,882,754,595.98`. Combined with the repeated protocol bound,
 the conservative smallest **odd** integer satisfying the explicit numerical
-q/SIS inequalities is `7,502,589,985,961`. This is a mathematical floor,
+q/SIS inequalities is `7,989,882,754,597`. This is a mathematical floor,
 not a recommended selected modulus. The row's reported `log2 q≈50` is much
 larger.
 
@@ -1256,20 +1252,17 @@ independently estimate M-SIS attack cost or establish concrete security.
   attack estimate.
 - `B=1` and the commitment M-LWE parameters
   `M-LWE_{m-n,n,q,B}=M-LWE_{8,5,q,1}` match the paper's Section 6.1 setup.
-  The following `T1`, `T'`, and q-bound calculations assume `phi1=phi2=4`;
-  they are conditional and must be recomputed if the notation resolves
-  differently.
-- Re-evaluation gives `T1=83,829,948,035.00746`,
-  `2T1=167,659,896,070.01492`, generic Theorem 3 `T'≈108,796,860,512.71124`,
-  and conservative Method 2 `B'<=d^k=65,536`. These match the documented
-  calculations. The exact enumerated Method 2 value is still not published;
-  the rounded table value must not be substituted as exact.
-- The single-run and repeated q lower bounds remain approximately
-  `375,812,090,536.585` and `6,012,964,022,934.341`, respectively. The
+  Under `phi1=phi2=22`, the displayed formula gives
+  `T1^2=12,510,811,934,324,441,481,216` and
+  `ceil(T1)=111,851,740,865`. The conservative Theorem 3 bound using
+  `B'<=d^k=65,536` has `ceil(T')=108,796,860,513`; the exact enumerated
+  `B'_{d,k}` is still not published.
+- The single-run and repeated q lower bounds under `phi1=22` are approximately
+  `11,368,255,048,333.219` and `181,891,918,932,520.88`, respectively. The
   stronger repeated bound applies to the repeated construction.
 - At `delta=1.0045`, solving the conservative M-SIS reduction-length side of
-  Eq. (11) gives `q > 7,502,589,985,959.782`; the smallest odd integer above
-  that threshold is `7,502,589,985,961`. The three candidates exceed it.
+  Eq. (11) gives `q > 7,989,882,754,595.98`; the smallest odd integer above
+  that threshold is `7,989,882,754,597`. The three candidates exceed it.
 - The `lambda=128` Table 3 entry is verified as the repeated protocol
   soundness exponent (`2^-128`). It must not be presented as an independently
   verified 128-bit classical or post-quantum computational security level.
@@ -1535,9 +1528,8 @@ or an unhashed test commitment. Until production providers are supplied and
 reviewed, tests can validate only the protocol equations and bounds, not
 zero-knowledge or soundness.
 
-For the project baseline, `k=2`, `beta=8`, `v=16`, `d=256`, `m=13`, and
-`B_bound=1`. The rejection-parameter notation is unresolved; `phi1=phi2=4`
-is only the prior provisional interpretation. The exact production q and
+For the project baseline, `k=2`, `beta=8`, `v=16`, `d=256`, `m=13`, `B_bound=1`,
+and `phi1=phi2=22` per Section 6.1. The exact production q and
 commitment binding bound remain unfinalized. Parameters and all verifier norm
 comparisons will be represented with exact rational squared bounds; no field
 inverse is used. Subsequent implementation uses the already existing

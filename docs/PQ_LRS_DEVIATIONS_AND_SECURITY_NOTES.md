@@ -8,14 +8,10 @@ The current local arithmetic, sampler and commitment modules are experimental fo
 
 ## Unresolved construction details
 
-- **Section 6.1 rejection-parameter notation:** prior project notes transcribed
-  the value as `phi1=phi2=2^2=4`; the current review raises the conflicting
-  literal reading `22`. For `mu(phi)=exp(12/phi+1/(2phi^2))`, direct arithmetic
-  gives `mu(22)≈1.7272` and `mu(4)≈20.7231`; their squares are approximately
-  `2.9831` and `429.4477`, respectively. These squared values are only
-  products of the two per-stage `mu` factors, not exact expected RSign retry
-  counts. The paper glyph must be confirmed before selecting a value or using
-  parameter-dependent bounds.
+- **Section 6.1 rejection parameter:** use literal `phi1=phi2=22`. Earlier
+  notes misread 22 as `2^2=4`; `mu(22)^2≈2.983` versus `mu(4)^2≈429.448`
+  matches the paper's stated acceptance rate above `1/3` and about three
+  expected RSign iterations.
 - **WCM transform:** the paper’s concrete text uses `H'` in key transformation/signing and appears to use `H` in verification. The codomains/types and intended equality must be established; no silent correction is made here.
 - **WCM OTS message:** signing text and verification text appear to name different OTS-authenticated values (`ovk` versus the OTS public key). Do not build a wrapper until resolved.
 - **Link scope:** comparing the same `ovk` gives linkability wherever that key is reused. Scoping duplicate detection to an auction/context is not directly supplied by the paper’s basic equality tag and may require a new, analyzed construction.
