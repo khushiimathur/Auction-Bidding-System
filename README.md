@@ -48,7 +48,7 @@ reference, not the configuration currently used for signing by this project.
 | \(\beta\) | 8 | Caller-supplied; RSign test fixture: 2 | No production profile. |
 | \(r\) | 16 | `hash_output_count` is caller-supplied; demo setup: 1, RSign test: 2 | The demo count is setup metadata; the demo does not sign. |
 | \(\lambda\) | 128 | Input to `ComputeRSignRepetitionCount`; test uses 128 | No production security parameter is configured. |
-| \(\phi_1,\phi_2\) | \(\phi_1=\phi_2=2^2=4\) | `PositiveRational` values are caller-supplied; RSign test: 1 and 1,000,000,000 | No production rejection profile. The paper notation is \(2^2\), not “22”. |
+| \(\phi_1,\phi_2\) | Requires verification: “22” conflicts with the prior \(2^2=4\) transcription | `PositiveRational` values are caller-supplied; RSign test: 1 and 1,000,000,000 | No production rejection profile; neither reading is approved. See the deviations note. |
 | \(T_{\mathrm{com}}^2\) | Derived commitment bounds; not a Table 3 value | Demo: \(100000/1\); RSign test fixture: \(2^{256}/1\) | These are demo/test values, not finalized production bounds. |
 | \(\delta\) | \(\leq 1.0045\) | Not configured or checked by the implementation | Paper-reported lattice-security analysis target only. |
 
@@ -67,6 +67,10 @@ Section 6.1 lattice-security checks targeting \(\delta\leq1.0045\).
 These are the paper's reported choices and analysis, not validations performed
 by this code. In particular, \(\lambda=128\) is a protocol soundness target;
 it does not by itself establish 128-bit post-quantum computational security.
+The Section 6.1 rejection-parameter notation remains unresolved: existing
+project notes transcribed it as \(2^2=4\), while this review raises the literal
+reading “22”. Do not treat either value as verified or use it for production
+configuration until the paper notation is confirmed.
 
 ### Demo-Only Parameters
 

@@ -436,9 +436,26 @@ TestContext make_context(ZeroByteSource& random) {
 }
 
 void test_repetition_count() {
-    require(ComputeRSignRepetitionCount(128, 256) == 16,
-            "d=256 and lambda=128 must require 16 repetitions");
-    require(ComputeRSignRepetitionCount(7, 3) == 5,
+    struct Table3Case {
+        std::size_t degree;
+        std::size_t k;
+        std::size_t repetitions;
+    };
+    const Table3Case table3_cases[] = {
+        {256, 2, 16},
+        {128, 2, 19},
+        {64, 2, 22},
+        {64, 3, 24},
+        {32, 3, 29},
+        {32, 5, 35},
+    };
+    for (const Table3Case& test_case : table3_cases) {
+        require(ComputeRSignRepetitionCount(
+                    128, test_case.degree, test_case.k) ==
+                    test_case.repetitions,
+                "repetition count must match the Section 6/Table 3 bound");
+    }
+    require(ComputeRSignRepetitionCount(7, 3, 1) == 5,
             "repetition count must use the least integer satisfying the bound");
 }
 

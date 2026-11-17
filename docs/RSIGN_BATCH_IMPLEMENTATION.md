@@ -2,9 +2,12 @@
 
 The backend now contains the repeated-execution RSign control flow and
 verification. A signature contains `r = hash_output_count` first messages,
-challenges, and Protocol 2 responses. `ComputeRSignRepetitionCount(lambda, d)`
-returns the least integer `r` for which `d^r >= 2^lambda`; callers must
-configure the hash output count with the chosen `r`.
+challenges, and Protocol 2 responses. Section 6 and Table 4 set the one-run
+soundness error to `k'/(2d)`, where `k'=max(2,k)`. Accordingly,
+`ComputeRSignRepetitionCount(lambda, d, k)` returns the least integer `r`
+satisfying `(2d/k')^r >= 2^lambda`, using exact integer comparisons rather
+than floating-point logarithms. The six Table 3 rows are covered by the
+focused test. Callers must configure the hash output count with the chosen `r`.
 
 Signing creates all first-message states for one attempt, encodes the complete
 commitment transcript, derives the challenge vector, and computes the

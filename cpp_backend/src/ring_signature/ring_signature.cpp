@@ -161,22 +161,32 @@ KeyPair RKeygen(const PublicParameters& public_parameters,
 
 std::size_t ComputeRSignRepetitionCount(
     std::size_t security_parameter_lambda,
-    std::size_t degree) {
-    if (security_parameter_lambda == 0 || degree < 2) {
+    std::size_t degree,
+    std::size_t k) {
+    if (security_parameter_lambda == 0 || degree < 2 || k == 0) {
         throw std::invalid_argument(
-            "RSign security parameter must be positive and degree must exceed one");
+            "RSign lambda and k must be positive and degree must exceed one");
     }
-    NTL::ZZ target(1);
+    const std::size_t k_prime = std::max(std::size_t{2}, k);
+    const NTL::ZZ two_degree = 2 * zz(degree);
+    const NTL::ZZ k_prime_zz = zz(k_prime);
+    if (k_prime_zz >= two_degree) {
+        throw std::invalid_argument(
+            "RSign requires max(2,k) to be smaller than 2*degree");
+    }
+
+    NTL::ZZ numerator(1);
     for (std::size_t i = 0; i < security_parameter_lambda; ++i) {
-        target *= 2;
+        numerator *= 2;
     }
-    NTL::ZZ soundness(1);
+    NTL::ZZ denominator(1);
     std::size_t repetitions = 0;
-    while (soundness < target) {
+    while (numerator > denominator) {
         if (repetitions == std::numeric_limits<std::size_t>::max()) {
             throw std::length_error("RSign repetition count overflows size_t");
         }
-        soundness *= zz(degree);
+        numerator *= k_prime_zz;
+        denominator *= two_degree;
         ++repetitions;
     }
     return repetitions;

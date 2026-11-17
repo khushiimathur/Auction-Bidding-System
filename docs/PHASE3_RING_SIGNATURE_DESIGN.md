@@ -589,7 +589,7 @@ permits.
 | `k'` | `max(2,k)` in the proof soundness bound, since binary subproof needs three transcripts even at `k=1`. One-run error is `k'/(2d)`. |
 | `r` | Repetition count, chosen as `ceil(lambda / log2(2d/k'))` to make the repeated soundness error at most `2^-lambda`; compare with Appendix D's formula and Table 3 rounding. |
 | `B` | Coefficient bound for secrets/opening randomness, set to `1`; coefficients are uniform in `{-1,0,1}` (`S_B`). |
-| `phi1,phi2` | Rejection-sampling parameters, both set to `2^2=4`; this yields expected signer retries at most 3 according to Section 6.1. |
+| `phi1,phi2` | Section 6.1 notation requires verification: “22” conflicts with the existing `2^2=4` transcription. Do not select either as a production value. |
 | `T1,T'` | Required commitment binding bounds from Theorem 3 and the repeated protocol; depend on `d,k,beta,r,B,phi1,phi2` and the extraction bound `B_{d,k}`. Must use the paper's formulas, not choose independently. |
 | `delta` | Root Hermite factor used in both M-SIS and M-LWE estimates; paper targets at most `1.0045`. |
 
@@ -812,15 +812,18 @@ Sections 2–5 and Appendix E supply the assumptions and proof bounds.
 | Signature size | 774 KB | Table 3, p. 21, rounded figure. It depends on the paper's encoding/size calculation and is not a byte-exact serialization specification. |
 | `v` | 16 | Appendix D, Table 4, p. 24 gives commitment-key dimension `n x (m+k*beta)`; hence `v=k*beta=2*8=16`. |
 | `B` | 1 | Section 6.1, p. 20. Fresh secret/opening coefficients are sampled uniformly from `{-1,0,1}`. |
-| `phi1,phi2` | 4, 4 | Section 6.1, p. 20 states `phi1=phi2=2^2`; these are rejection-sampling controls. |
+| `phi1,phi2` | Requires verification | Existing notes read `2^2=4`; this review raises “22”. These are rejection-sampling controls, but the value must not be selected until the source notation is resolved. |
 
-All selected row values match Table 3. The exact modulus and exact enumerated
-Method 2 value `B_{d,k}` are not printed as exact numbers in Tables 3–4.
+All Table 3 values above except `phi1,phi2` are transcribed as listed. The
+exact modulus and exact enumerated Method 2 value `B_{d,k}` are not printed as
+exact numbers in Tables 3–4.
 
 ### B. Relationships and derived values
 
-The construction-specific calculations below use `B=1`,
-`phi1=phi2=4`, and the selected row.
+The following illustrative calculations use `B=1`, the selected row, and
+the prior provisional interpretation `phi1=phi2=4`. Values that depend on
+`phi1` or `phi2` are conditional only and are not confirmed as the paper's
+parameter calculations.
 
 #### Ring size and dimensions
 
@@ -865,8 +868,9 @@ separate from computational security under M-SIS/M-LWE.
 
 - `B=1`: coefficient box `[-1,1]` for fresh secret/opening randomness, as
   stated in Section 6.1, p. 20.
-- `phi1=phi2=4`: Section 6.1, p. 20 sets both to `2^2` so the expected
-  signing retry count is at most 3.
+- The Section 6.1 rejection-parameter notation remains unresolved. The
+  `phi1=phi2=4` calculations in this document are provisional, not verified
+  paper values; see `PQ_LRS_DEVIATIONS_AND_SECURITY_NOTES.md`.
 - The commitment key is generated as in Section 2.2, p. 6:
   `G'_r <- R_q^{n x (m-n)}`, `G_m <- R_q^{n x v}` independently uniform;
   `G=[I_n | G'_r | G_m]`. Here the shapes are `5x8`, `5x16`, and `5x29`.
@@ -1250,8 +1254,11 @@ independently estimate M-SIS attack cost or establish concrete security.
   `eta=max(2,log_beta(N))/(2d)=2/512=2^-8`; `r=ceil(128/8)=16` and
   `eta^r=2^-128`. This is protocol soundness, not a 128-bit computational
   attack estimate.
-- `phi1=phi2=4`, `B=1`, and the commitment M-LWE parameters
+- `B=1` and the commitment M-LWE parameters
   `M-LWE_{m-n,n,q,B}=M-LWE_{8,5,q,1}` match the paper's Section 6.1 setup.
+  The following `T1`, `T'`, and q-bound calculations assume `phi1=phi2=4`;
+  they are conditional and must be recomputed if the notation resolves
+  differently.
 - Re-evaluation gives `T1=83,829,948,035.00746`,
   `2T1=167,659,896,070.01492`, generic Theorem 3 `T'≈108,796,860,512.71124`,
   and conservative Method 2 `B'<=d^k=65,536`. These match the documented
@@ -1529,13 +1536,13 @@ reviewed, tests can validate only the protocol equations and bounds, not
 zero-knowledge or soundness.
 
 For the project baseline, `k=2`, `beta=8`, `v=16`, `d=256`, `m=13`, and
-`B_bound=1`; `phi1=phi2=4` are the previously documented provisional protocol
-settings. The exact production q and commitment binding bound remain
-unfinalized. Parameters and all verifier norm comparisons will be represented
-with exact rational squared bounds; no field inverse is used. Subsequent
-implementation uses the already existing polynomial, matrix, commitment, and
-OS-random-source code. No Fiat–Shamir transform or one-out-of-many logic is
-part of this step.
+`B_bound=1`. The rejection-parameter notation is unresolved; `phi1=phi2=4`
+is only the prior provisional interpretation. The exact production q and
+commitment binding bound remain unfinalized. Parameters and all verifier norm
+comparisons will be represented with exact rational squared bounds; no field
+inverse is used. Subsequent implementation uses the already existing
+polynomial, matrix, commitment, and OS-random-source code. No Fiat–Shamir
+transform or one-out-of-many logic is part of this step.
 
 #### Implemented protocol core
 

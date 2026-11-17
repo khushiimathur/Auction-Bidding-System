@@ -135,10 +135,11 @@ struct RSignSignature {
     std::vector<proofs::Protocol2Response> responses;
 };
 
-// Returns the least r such that d^r >= 2^security_parameter_lambda.
+// Returns the least r such that (2*d/max(2,k))^r >= 2^lambda.
 std::size_t ComputeRSignRepetitionCount(
     std::size_t security_parameter_lambda,
-    std::size_t degree);
+    std::size_t degree,
+    std::size_t k);
 
 // Orchestrates the complete Section 6 retry loop. Gaussian and rejection
 // providers must explicitly affirm support for the Section 6 distributions.
