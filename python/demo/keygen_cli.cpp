@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
     try {
         const std::size_t count = bidder_count(argc, argv);
         using namespace lattice_lrs;
-        const ring_signature::SetupParameters setup{
+        const ring_signature::TestOnlySetupParameters setup{
             commitment::Parameters{
                 1, 2, 1, 3, NTL::to_ZZ(101), NTL::to_ZZ(3),
                 commitment::SquaredNormBound(NTL::to_ZZ(100000), NTL::to_ZZ(1))},
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
         auto hash = std::make_shared<UnavailableHashToChallenges>();
         sampling::SystemRandomSource random;
         const ring_signature::PublicParameters public_parameters =
-            ring_signature::RSetup(setup, std::move(hash), random);
+            ring_signature::RSetupForTesting(setup, std::move(hash), random);
 
         std::cout << "{\"parameters\":{\"n\":1,\"m\":2,\"v\":1,"
                      "\"degree\":3,\"q\":\"0x65\",\"B\":\"0x3\","
@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
         for (std::size_t index = 0; index < count; ++index) {
             if (index != 0) std::cout << ',';
             const ring_signature::KeyPair key_pair =
-                ring_signature::RKeygen(public_parameters, random);
+                ring_signature::RKeygenForTesting(public_parameters, random);
             std::cout << "{\"id\":\"B" << index + 1
                       << "\",\"public_key\":";
             write_polynomial_vector(std::cout, key_pair.public_key.commitment, false);

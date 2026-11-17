@@ -37,19 +37,19 @@ reference, not the configuration currently used for signing by this project.
 
 | Parameter | Esgin paper | Current implementation | Status / Notes |
 |---|---:|---|---|
-| \(N\) | 64 | No production RSign profile; demo lists five bidders for lookup only; test ring: 4 | \(N=\beta^k=8^2=64\) in the paper row. |
-| \(n\) | 5 | Demo: 1; RSign test fixture: 1 | No production profile. |
-| \(m\) | 13 | Demo: 2; RSign test fixture: 1 | No production profile. |
-| \(v\) | 16, derived as \(k\beta\) | Demo: 1; RSign test fixture: 4 | Derived from Appendix D; not a Table 3 column. |
-| \(d\) | 256 | Demo: 3; RSign test fixture: 86 | No production profile. |
-| \(q\) | \(\log_2(q)=50\), rounded | Demo: 101; RSign test fixture: 1,000,000,007 | The table does not specify an exact \(q\); no production \(q\) is selected. |
-| \(B\) | 1 | Demo: 3; RSign test fixture: 1 | No production bound. |
-| \(k\) | 2 | Caller-supplied; RSign test fixture: 2 | No production profile. |
-| \(\beta\) | 8 | Caller-supplied; RSign test fixture: 2 | No production profile. |
-| \(r\) | 16 | `hash_output_count` is caller-supplied; demo setup: 1, RSign test: 2 | The demo count is setup metadata; the demo does not sign. |
-| \(\lambda\) | 128 | Input to `ComputeRSignRepetitionCount`; test uses 128 | No production security parameter is configured. |
-| \(\phi_1,\phi_2\) | 22, literal | `PositiveRational` values are caller-supplied; RSign test: 1 and 1,000,000,000 | Paper's Section 6.1 rejection parameter; production profile validation remains separate. |
-| \(T_{\mathrm{com}}^2\) | Derived commitment bounds; not a Table 3 value | Demo: \(100000/1\); RSign test fixture: \(2^{256}/1\) | These are demo/test values, not finalized production bounds. |
+| \(N\) | 64 | Named profiles: 64, 256, 1024, 4096; test ring: 4 | \(N=\beta^k\); code profiles are not security-approved. |
+| \(n\) | 5 | Profiles: 5, 5, 11, 21; demo: 1; test fixture: 1 | Profile order is \(N=64,256,1024,4096\). |
+| \(m\) | 13 | Profiles: 13, 13, 25, 50; demo: 2; test fixture: 1 | Profile order is \(N=64,256,1024,4096\). |
+| \(v\) | 16, derived as \(k\beta\) | Profiles: 16, 32, 64, 128; demo: 1; test fixture: 4 | Derived from \(k\beta\); not a Table 3 column. |
+| \(d\) | 256 | Profiles: 256, 256, 128, 64; demo: 3; test fixture: 86 | Profile order is \(N=64,256,1024,4096\). |
+| \(q\) | \(\log_2(q)=50\), rounded | Exact code-selected primes are listed below; demo: 101; test fixture: 1,000,000,007 | Table 3 gives only rounded \(\log_2(q)\); selected values are implementation choices, not security approvals. |
+| \(B\) | 1 | 1 in all profiles; demo: 3; test fixture: 1 | Profile value follows Table 3. |
+| \(k\) | 2 | 2 in all profiles; test fixture: 2 | Profiles use Table 3 values. |
+| \(\beta\) | 8 | Profiles: 8, 16, 32, 64; test fixture: 2 | Profile order is \(N=64,256,1024,4096\). |
+| \(r\) | 16 | Profiles: 16, 16, 19, 22; test fixture: 2 | Computed using the Section 6 repetition bound; demo setup count: 1 is not an RSign value. |
+| \(\lambda\) | 128 | 128 in all profiles; test uses 128 | Protocol soundness target; not a post-quantum security level. |
+| \(\phi_1,\phi_2\) | 22, literal | 22 in all profiles; test fixtures may inject other rationals | Profile selection reflects Section 6.1; no production rejection provider is supplied. |
+| \(T_{\mathrm{com}}^2\) | Derived commitment bounds; not a Table 3 value | Profiles derive \(T_1^2\); demo: \(100000/1\); RSign test fixture: \(2^{256}/1\) | Profile code checks conservative q-side thresholds only; no lattice-hardness estimate is performed. |
 | \(\delta\) | \(\leq 1.0045\) | Not configured or checked by the implementation | Paper-reported lattice-security analysis target only. |
 
 The paper defines \(R=\mathbb{Z}[X]/(X^d+1)\) and \(R_q=R/qR\). Its
@@ -59,6 +59,25 @@ Appendix D derives \(v=k\beta=16\), so the paper's M-LWE instance is
 \(\mathrm{M\text{-}LWE}_{8,5,q,1}\). The paper reports approximate sizes of
 774 KB per signature, 7.81 KB per public key, and 0.81 KB per secret key;
 these are not sizes of a serialization implemented here.
+
+The code includes these exact prime moduli for its named profiles:
+
+| \(N\) | Paper \(\log_2(q)\) | Code-selected \(q\) |
+|---:|---:|---:|
+| 64 | 50 | 1125899906826241 |
+| 256 | 53 | 9007199254740481 |
+| 1024 | 46 | 119569584450049 |
+| 4096 | 47 | 140737488355201 |
+
+These choices satisfy the profile's exact repeated Assumption 1 and q-side
+binding checks. The code additionally requires prime \(q\equiv1\pmod{2d}\),
+which the paper does not require; with these prime moduli this makes
+\(X^d+1\) split over \(\mathbb F_q\), a ring-structure choice that needs
+cryptographic review. For \(N=1024\), the selected \(q\) has
+\(\log_2(q)\approx46.765\), above the paper row's rounded value 46, to meet
+the implemented constraints. No M-SIS/M-LWE hardness estimate was run, and
+the code does not check the paper's \(\delta\leq1.0045\) lattice-reduction
+condition.
 
 The paper's stated choices include \(\beta=8\) and \(k=2\) for \(N=64\);
 \(B=1\), following prior work and checked in its M-LWE analysis; \(r=16\)
@@ -203,6 +222,11 @@ ctest --test-dir build-dilithium --output-on-failure
 - Protocol 2 polynomial expansion and \(E_j\) construction, response
   generation, integer-lift handling, joint response rejection, and
   prover/verifier logic.
+- Named parameter profiles for \(N=64,256,1024,4096\), with exact integer
+  checks for \(N=\beta^k\), \(v=k\beta\), the repeated Assumption 1, and
+  conservative \(T_1/T'\) q-side bounds. These profiles are not security
+  estimates or production approvals. Demo/test setups use explicitly named
+  `TestOnly` APIs, rejected by production keygen/sign/verify entry points.
 - RSign/RVerify batch control flow: repeated executions, transcript and
   hash-to-challenges interfaces, global rejection-provider calls, whole-batch
   retries, and verification of all executions. The interfaces are wired into
@@ -212,8 +236,8 @@ ctest --test-dir build-dilithium --output-on-failure
 - A Streamlit educational demo for C++ key generation and public-key ring
   membership. It does not generate or verify an Esgin signature.
 
-The current configured build registers 20 CTest tests and the latest full run
-passed 20/20, including the optional Dilithium tests. A fresh default CMake
+The current configured build registers 21 CTest tests and the latest full run
+passed 21/21, including the optional Dilithium tests. A fresh default CMake
 configuration disables those two optional tests.
 
 ### In Progress
@@ -225,8 +249,9 @@ configuration disables those two optional tests.
 
 ### Not Yet Implemented
 
-- A finalized production parameter profile and exact modulus selection. The
-  paper reports rounded \(\log_2(q)=50\), not an exact modulus for this row.
+- Security-reviewed final parameter selection. Named profiles and exact
+  moduli are present, but the code-selected \(q\) values are not paper values
+  or security approvals.
 - A concrete cryptographically justified auxiliary commitment `aCom`; the
   current API is an injected provider.
 - Production canonical Fiat-Shamir transcript serialization and a concrete
@@ -244,6 +269,8 @@ doubles, not cryptographic implementations. The exact repeated-run raw
 distribution profile and the statistical-distance qualification in Appendix E
 remain unresolved. Integer lifts are retained through the implemented global
 rejection interface, but canonical signature/transcript serialization is not
-finalized. No claim is made that the complete PQ-LRS or WCM scheme is secure,
-fully post-quantum validated, or production-ready. This is not a complete
-sealed-bid auction application.
+finalized. The parameter code checks the q member of the Section 6.1 binding
+inequality, not its lattice-reduction member; no M-SIS/M-LWE hardness
+re-estimation has been done. No claim is made that the complete PQ-LRS or WCM
+scheme is secure, fully post-quantum validated, or production-ready. This is
+not a complete sealed-bid auction application.

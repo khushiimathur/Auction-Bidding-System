@@ -2,6 +2,7 @@
 
 #include "lattice_lrs/commitment/commitment.hpp"
 #include "lattice_lrs/proofs/protocol2_proof.hpp"
+#include "lattice_lrs/ring_signature/parameter_profile.hpp"
 #include "lattice_lrs/sampling/random_source.hpp"
 
 #include <cstddef>
@@ -25,7 +26,7 @@ public:
         std::size_t output_count) const = 0;
 };
 
-struct SetupParameters {
+struct TestOnlySetupParameters {
     commitment::Parameters commitment;
     std::size_t hash_output_count;
 
@@ -35,7 +36,12 @@ struct SetupParameters {
 class PublicParameters;
 
 PublicParameters RSetup(
-    const SetupParameters& parameters,
+    const ParameterProfile& profile,
+    std::shared_ptr<const HashToChallenges> hash_to_challenges,
+    sampling::RandomSource& random);
+
+PublicParameters RSetupForTesting(
+    const TestOnlySetupParameters& parameters,
     std::shared_ptr<const HashToChallenges> hash_to_challenges,
     sampling::RandomSource& random);
 
@@ -46,6 +52,8 @@ public:
     }
     const ChallengeSet& challenge_set() const noexcept { return challenge_set_; }
     std::size_t hash_output_count() const noexcept { return hash_output_count_; }
+    bool is_test_only() const noexcept { return !profile_; }
+    const ParameterProfile* profile() const noexcept { return profile_.get(); }
 
     ChallengeVector hash_to_challenges(
         const std::vector<std::uint8_t>& input) const;
@@ -56,15 +64,21 @@ private:
     PublicParameters(
         commitment::CommitmentKey commitment_key,
         std::size_t hash_output_count,
-        std::shared_ptr<const HashToChallenges> hash_to_challenges);
+        std::shared_ptr<const HashToChallenges> hash_to_challenges,
+        std::shared_ptr<const ParameterProfile> profile);
 
     commitment::CommitmentKey commitment_key_;
     ChallengeSet challenge_set_;
     std::size_t hash_output_count_;
     std::shared_ptr<const HashToChallenges> hash_to_challenges_;
+    std::shared_ptr<const ParameterProfile> profile_;
 
     friend PublicParameters RSetup(
-        const SetupParameters&,
+        const ParameterProfile&,
+        std::shared_ptr<const HashToChallenges>,
+        sampling::RandomSource&);
+    friend PublicParameters RSetupForTesting(
+        const TestOnlySetupParameters&,
         std::shared_ptr<const HashToChallenges>,
         sampling::RandomSource&);
 };
@@ -84,6 +98,8 @@ struct KeyPair {
 
 KeyPair RKeygen(const PublicParameters& public_parameters,
                 sampling::RandomSource& random);
+KeyPair RKeygenForTesting(const PublicParameters& public_parameters,
+                          sampling::RandomSource& random);
 
 class RSignTranscriptEncoder {
 public:
@@ -157,7 +173,28 @@ RSignSignature RSign(
     RSignBatchRejectionProvider& rejection,
     sampling::RandomSource& random);
 
+RSignSignature RSignForTesting(
+    const PublicParameters& public_parameters,
+    const proofs::Protocol2Parameters& proof_parameters,
+    const proofs::Protocol2PublicList& ring,
+    const proofs::Protocol2Witness& witness,
+    const std::vector<std::uint8_t>& message,
+    const RSignTranscriptEncoder& transcript_encoder,
+    proofs::Protocol2RSignGaussianProvider& gaussian,
+    proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
+    RSignBatchRejectionProvider& rejection,
+    sampling::RandomSource& random);
+
 bool RVerify(
+    const PublicParameters& public_parameters,
+    const proofs::Protocol2Parameters& proof_parameters,
+    const proofs::Protocol2PublicList& ring,
+    const std::vector<std::uint8_t>& message,
+    const RSignSignature& signature,
+    const RSignTranscriptEncoder& transcript_encoder,
+    const proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment);
+
+bool RVerifyForTesting(
     const PublicParameters& public_parameters,
     const proofs::Protocol2Parameters& proof_parameters,
     const proofs::Protocol2PublicList& ring,

@@ -51,6 +51,7 @@ add_library(lattice_lrs_backend STATIC
     src/proofs/protocol2_rejection.cpp
     src/proofs/protocol2_response.cpp
     src/proofs/protocol2_response_lift.cpp
+    src/ring_signature/parameter_profile.cpp
     src/ring_signature/ring_signature.cpp
 )
 target_include_directories(lattice_lrs_backend PUBLIC

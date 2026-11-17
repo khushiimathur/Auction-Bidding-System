@@ -81,20 +81,34 @@ ChallengeSet make_challenge_set(
     return result;
 }
 
+bool protocol_parameters_match_profile(
+    const ParameterProfile& profile,
+    const proofs::Protocol2Parameters& parameters) {
+    const NTL::ZZ one(1);
+    return parameters.k == profile.k() &&
+           parameters.beta == profile.beta() &&
+           parameters.phi1.numerator == zz(profile.phi1()) &&
+           parameters.phi1.denominator == one &&
+           parameters.phi2.numerator == zz(profile.phi2()) &&
+           parameters.phi2.denominator == one;
+}
+
 }  // namespace
 
-void SetupParameters::validate() const {
+void TestOnlySetupParameters::validate() const {
     validate_ring_signature_parameters(commitment, hash_output_count);
 }
 
 PublicParameters::PublicParameters(
     commitment::CommitmentKey commitment_key,
     std::size_t hash_output_count,
-    std::shared_ptr<const HashToChallenges> hash_to_challenges)
+    std::shared_ptr<const HashToChallenges> hash_to_challenges,
+    std::shared_ptr<const ParameterProfile> profile)
     : commitment_key_(std::move(commitment_key)),
       challenge_set_(make_challenge_set(commitment_key_.parameters())),
       hash_output_count_(hash_output_count),
-      hash_to_challenges_(std::move(hash_to_challenges)) {}
+      hash_to_challenges_(std::move(hash_to_challenges)),
+      profile_(std::move(profile)) {}
 
 void PublicParameters::validate() const {
     const commitment::Parameters& parameters = commitment_key_.parameters();
@@ -106,6 +120,25 @@ void PublicParameters::validate() const {
     if (challenge_set_ != expected) {
         throw std::invalid_argument(
             "public challenge set is incompatible with the commitment key ring");
+    }
+    if (profile_) {
+        profile_->validate();
+        const commitment::Parameters expected_parameters =
+            profile_->commitment_parameters();
+        if (hash_output_count_ != profile_->repetitions() ||
+            parameters.n != expected_parameters.n ||
+            parameters.m != expected_parameters.m ||
+            parameters.v != expected_parameters.v ||
+            parameters.degree != expected_parameters.degree ||
+            parameters.q != expected_parameters.q ||
+            parameters.B != expected_parameters.B ||
+            parameters.T_com_squared.numerator !=
+                expected_parameters.T_com_squared.numerator ||
+            parameters.T_com_squared.denominator !=
+                expected_parameters.T_com_squared.denominator) {
+            throw std::invalid_argument(
+                "public parameters do not match their production profile");
+        }
     }
 }
 
@@ -126,7 +159,26 @@ ChallengeVector PublicParameters::hash_to_challenges(
 }
 
 PublicParameters RSetup(
-    const SetupParameters& parameters,
+    const ParameterProfile& profile,
+    std::shared_ptr<const HashToChallenges> hash_to_challenges,
+    sampling::RandomSource& random) {
+    profile.validate();
+    if (!hash_to_challenges) {
+        throw std::invalid_argument("hash-to-challenges provider must not be null");
+    }
+
+    commitment::CommitmentKey key =
+        commitment::CKeygen(profile.commitment_parameters(), random);
+    PublicParameters result(
+        std::move(key), profile.repetitions(),
+        std::move(hash_to_challenges),
+        std::make_shared<const ParameterProfile>(profile));
+    result.validate();
+    return result;
+}
+
+PublicParameters RSetupForTesting(
+    const TestOnlySetupParameters& parameters,
     std::shared_ptr<const HashToChallenges> hash_to_challenges,
     sampling::RandomSource& random) {
     parameters.validate();
@@ -137,13 +189,15 @@ PublicParameters RSetup(
     commitment::CommitmentKey key =
         commitment::CKeygen(parameters.commitment, random);
     PublicParameters result(std::move(key), parameters.hash_output_count,
-                            std::move(hash_to_challenges));
+                            std::move(hash_to_challenges), nullptr);
     result.validate();
     return result;
 }
 
-KeyPair RKeygen(const PublicParameters& public_parameters,
-                sampling::RandomSource& random) {
+namespace {
+
+KeyPair keygen_impl(const PublicParameters& public_parameters,
+                    sampling::RandomSource& random) {
     public_parameters.validate();
     const commitment::Parameters& parameters =
         public_parameters.commitment_key().parameters();
@@ -157,6 +211,26 @@ KeyPair RKeygen(const PublicParameters& public_parameters,
 
     return KeyPair{PublicKey{std::move(public_commitment)},
                    SecretKey{std::move(randomness)}};
+}
+
+}  // namespace
+
+KeyPair RKeygen(const PublicParameters& public_parameters,
+                sampling::RandomSource& random) {
+    if (public_parameters.is_test_only()) {
+        throw std::invalid_argument(
+            "production RKeygen rejects TestOnly parameters");
+    }
+    return keygen_impl(public_parameters, random);
+}
+
+KeyPair RKeygenForTesting(const PublicParameters& public_parameters,
+                          sampling::RandomSource& random) {
+    if (!public_parameters.is_test_only()) {
+        throw std::invalid_argument(
+            "RKeygenForTesting requires TestOnly parameters");
+    }
+    return keygen_impl(public_parameters, random);
 }
 
 std::size_t ComputeRSignRepetitionCount(
@@ -192,7 +266,7 @@ std::size_t ComputeRSignRepetitionCount(
     return repetitions;
 }
 
-RSignSignature RSign(
+static RSignSignature r_sign_impl(
     const PublicParameters& public_parameters,
     const proofs::Protocol2Parameters& proof_parameters,
     const proofs::Protocol2PublicList& ring,
@@ -202,8 +276,21 @@ RSignSignature RSign(
     proofs::Protocol2RSignGaussianProvider& gaussian,
     proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
     RSignBatchRejectionProvider& rejection,
-    sampling::RandomSource& random) {
+    sampling::RandomSource& random,
+    bool allow_test_only) {
     public_parameters.validate();
+    if (public_parameters.is_test_only() != allow_test_only) {
+        throw std::invalid_argument(
+            allow_test_only
+                ? "RSignForTesting requires TestOnly parameters"
+                : "production RSign rejects TestOnly parameters");
+    }
+    if (!allow_test_only &&
+        !protocol_parameters_match_profile(*public_parameters.profile(),
+                                           proof_parameters)) {
+        throw std::invalid_argument(
+            "RSign proof parameters do not match the production profile");
+    }
     const commitment::CommitmentKey& key = public_parameters.commitment_key();
     const commitment::Parameters& p = key.parameters();
     proof_parameters.validate(key);
@@ -345,15 +432,54 @@ RSignSignature RSign(
     }
 }
 
-bool RVerify(
+RSignSignature RSign(
+    const PublicParameters& public_parameters,
+    const proofs::Protocol2Parameters& proof_parameters,
+    const proofs::Protocol2PublicList& ring,
+    const proofs::Protocol2Witness& witness,
+    const std::vector<std::uint8_t>& message,
+    const RSignTranscriptEncoder& transcript_encoder,
+    proofs::Protocol2RSignGaussianProvider& gaussian,
+    proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
+    RSignBatchRejectionProvider& rejection,
+    sampling::RandomSource& random) {
+    return r_sign_impl(public_parameters, proof_parameters, ring, witness,
+                       message, transcript_encoder, gaussian,
+                       auxiliary_commitment, rejection, random, false);
+}
+
+RSignSignature RSignForTesting(
+    const PublicParameters& public_parameters,
+    const proofs::Protocol2Parameters& proof_parameters,
+    const proofs::Protocol2PublicList& ring,
+    const proofs::Protocol2Witness& witness,
+    const std::vector<std::uint8_t>& message,
+    const RSignTranscriptEncoder& transcript_encoder,
+    proofs::Protocol2RSignGaussianProvider& gaussian,
+    proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
+    RSignBatchRejectionProvider& rejection,
+    sampling::RandomSource& random) {
+    return r_sign_impl(public_parameters, proof_parameters, ring, witness,
+                       message, transcript_encoder, gaussian,
+                       auxiliary_commitment, rejection, random, true);
+}
+
+static bool r_verify_impl(
     const PublicParameters& public_parameters,
     const proofs::Protocol2Parameters& proof_parameters,
     const proofs::Protocol2PublicList& ring,
     const std::vector<std::uint8_t>& message,
     const RSignSignature& signature,
     const RSignTranscriptEncoder& transcript_encoder,
-    const proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+    const proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
+    bool allow_test_only) {
+    if (public_parameters.is_test_only() != allow_test_only) return false;
     public_parameters.validate();
+    if (!allow_test_only &&
+        !protocol_parameters_match_profile(*public_parameters.profile(),
+                                           proof_parameters)) {
+        return false;
+    }
     const commitment::CommitmentKey& key = public_parameters.commitment_key();
     proof_parameters.validate(key);
     const std::size_t repetitions = public_parameters.hash_output_count();
@@ -376,6 +502,32 @@ bool RVerify(
         }
     }
     return true;
+}
+
+bool RVerify(
+    const PublicParameters& public_parameters,
+    const proofs::Protocol2Parameters& proof_parameters,
+    const proofs::Protocol2PublicList& ring,
+    const std::vector<std::uint8_t>& message,
+    const RSignSignature& signature,
+    const RSignTranscriptEncoder& transcript_encoder,
+    const proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+    return r_verify_impl(public_parameters, proof_parameters, ring, message,
+                         signature, transcript_encoder, auxiliary_commitment,
+                         false);
+}
+
+bool RVerifyForTesting(
+    const PublicParameters& public_parameters,
+    const proofs::Protocol2Parameters& proof_parameters,
+    const proofs::Protocol2PublicList& ring,
+    const std::vector<std::uint8_t>& message,
+    const RSignSignature& signature,
+    const RSignTranscriptEncoder& transcript_encoder,
+    const proofs::Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+    return r_verify_impl(public_parameters, proof_parameters, ring, message,
+                         signature, transcript_encoder, auxiliary_commitment,
+                         true);
 }
 
 }  // namespace lattice_lrs::ring_signature

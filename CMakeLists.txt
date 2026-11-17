@@ -97,6 +97,10 @@ add_executable(rsign_batch_test tests/test_rsign_batch.cpp)
 target_link_libraries(rsign_batch_test PRIVATE lattice_lrs_backend)
 add_test(NAME rsign_batch_test COMMAND rsign_batch_test)
 
+add_executable(parameter_profile_test tests/test_parameter_profile.cpp)
+target_link_libraries(parameter_profile_test PRIVATE lattice_lrs_backend)
+add_test(NAME parameter_profile_test COMMAND parameter_profile_test)
+
 option(LATTICE_LRS_BUILD_DILITHIUM_TESTS
     "Build isolated tests against both official Dilithium reference implementations"
     OFF

@@ -16,8 +16,38 @@ The current local arithmetic, sampler and commitment modules are experimental fo
 - **WCM OTS message:** signing text and verification text appear to name different OTS-authenticated values (`ovk` versus the OTS public key). Do not build a wrapper until resolved.
 - **Link scope:** comparing the same `ovk` gives linkability wherever that key is reused. Scoping duplicate detection to an auction/context is not directly supplied by the paper’s basic equality tag and may require a new, analyzed construction.
 - **Dilithium version/API:** local Round 2 and Round 3 test targets do not by themselves establish which historical “very high” Dilithium source/API the WCM experiment used, nor compatibility of its serialization and OTS message tuple.
-- **Esgin parameters:** q is not finalized or security-approved. A paper’s rounded `log₂(q)` and functional tests do not establish the concrete M-SIS/M-LWE security level. Use exact parameter and estimator assumptions before claiming a level.
-- **Proof implementation:** Esgin Protocol 1's equation/prover/verifier core is implemented behind provider interfaces. The source tree still has no production discrete-Gaussian sampler, exact Bernoulli-exponential sampler, or selected `aCom` implementation. Protocol 2, Fiat–Shamir and the base Esgin ring signature are absent.
+- **Esgin parameters:** code-selected exact moduli now exist in named profiles, but they are not security-approved. The paper's rounded `log₂(q)` and functional tests do not establish the concrete M-SIS/M-LWE security level. Use exact parameter and estimator assumptions before claiming a level.
+- **Proof implementation:** Protocol 1, Protocol 2, and RSign/RVerify batch orchestration are present. Production transcript/hash, Gaussian/rejection, and auxiliary-commitment providers remain unresolved; the presence of exact sampler primitives does not establish that the required Section 6 distributions are implemented.
+
+## Parameter profile implementation and deviations
+
+The code defines profiles for \(N=64,256,1024,4096\) using the corresponding
+Table 3 dimensions and repetition counts, with \(B=1\),
+\(\phi_1=\phi_2=22\), and \(\lambda=128\). Selected exact primes are:
+
+| \(N\) | Paper \(\log_2(q)\) | Code-selected \(q\) |
+|---:|---:|---:|
+| 64 | 50 | 1125899906826241 |
+| 256 | 53 | 9007199254740481 |
+| 1024 | 46 | 119569584450049 |
+| 4096 | 47 | 140737488355201 |
+
+These are implementation choices because Table 3 gives only rounded
+\(\log_2(q)\). The implementation additionally requires prime
+\(q\equiv1\pmod{2d}\), while the paper requires odd \(q\) and does not require
+this congruence. For these primes the polynomial \(X^d+1\) splits over
+\(\mathbb F_q\); this changes the quotient-ring structure and needs security
+review. The \(N=1024\) choice has \(\log_2(q)\approx46.765\), above the
+paper's rounded 46, to meet the implemented constraints.
+
+Profile validation uses exact integer arithmetic for the repeated Assumption
+1 inequality and the q-side of Eq. (11), with ceiling-square-root bounds for
+\(T_1\) and the \(T'\) term using \(B'_{d,k}\le d^k\). It does not evaluate
+Eq. (11)'s lattice-reduction member, check \(\delta\le1.0045\), or re-estimate
+M-SIS/M-LWE hardness. These profiles are not cryptographic security
+validations. `TestOnlySetupParameters` and `*ForTesting` APIs mark the
+pre-existing toy fixtures; production keygen/sign/verify entry points reject
+those fixtures.
 
 ## Security-sensitive integration findings
 
@@ -26,13 +56,13 @@ The current local arithmetic, sampler and commitment modules are experimental fo
 - Raptor is GPL-3.0 and a separate NTRU/Falcon construction; the inspected serialization offsets need maintainer explanation. It is not a WCM OTS/tag adapter.
 - Calamari/Falafl and several other candidates have distinct relations and/or licensing and audit constraints. See the component map for each repository’s observed license and caveats.
 - Neither upstream Dilithium source should be modified or treated as implementing ring membership, Esgin proofs, or WCM linkability. An adapter must keep the upstream implementation intact and use the correct historical variant and exact signed bytes.
-- The current 7/7 CTest result, including the Protocol 1 fixture test, is functional evidence only. It is not a cryptographic security evaluation and does not validate protocol composition.
+- The latest configured full CTest run passed 21/21 tests, including optional Dilithium Round 2/3 tests. This is functional evidence only. It is not a cryptographic security evaluation and does not validate protocol composition.
 
 ## Safe status statement
 
 The project has reusable local arithmetic/sampling/commitment groundwork and independently tested Dilithium source trees. It does **not** yet have a complete Esgin ring signature, WCM linkability extension, verified Dilithium OTS adapter, or context-scoped auction link tag. No security claim is made for the combined system.
 
-The Protocol 1 test uses deterministic fixture providers only. It checks equations and validation logic for specific toy inputs; it does not establish that any implementation of the provider interfaces has the required distributions, or that the proof is zero knowledge/sound under chosen production parameters. The selected production modulus and lattice estimates remain unresolved.
+The tests use deterministic fixture providers for protocol-flow checks. They do not establish that injected production providers have the required distributions, or that the proofs are zero knowledge/sound under the selected profile inputs. The code-selected moduli are not security-final, and lattice estimates remain unresolved.
 
 ## References
 

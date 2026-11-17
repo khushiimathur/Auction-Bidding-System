@@ -497,15 +497,14 @@ hash has been added.
 
 #### Assumption 1 and binding profile
 
-For a future RSign parameter profile, enforce the excerpt's exact checks:
+The `ParameterProfile` implementation now enforces the excerpt's exact checks:
 
 \[
 d\geq7,\qquad md\geq86,\qquad
 q>(10\phi_1d\sqrt{dkr(\beta-1)}+2)^2,\qquad N=\beta^k.
 \]
 
-The current generic parameter validation and Protocol 2 validation do not
-establish all of these repeated-signature conditions. If
+These checks supplement generic commitment and Protocol 2 validation. If
 \(\phi_1=p/t\) with positive integers `p,t`, the strict q inequality can be
 checked without floating point by setting
 \(W=dkr(\beta-1)\), \(A=10pd\), and
@@ -519,14 +518,15 @@ T_1=\sqrt{(2d+2)
   (54\phi_1^4d^3k^3\beta(\beta-1)r^2
    +12\phi_2^2B^2m^2d^2r)}.
 \]
-The current commitment parameters store a rational squared norm bound, but
-RSetup does not enforce this RSign binding profile. A future profile must
-encode and validate the paper's `T_1`-binding requirement; do not select a
-numeric profile here. The excerpt also states that the extracted-randomness
-relation `R'_1/N` becomes
-\(24\sqrt{3r}Bmd\,(k+1)d^k\). The notation `R'_1/N` and its precise role in
-the binding calculation are not defined by the excerpt, so that relation
-cannot yet be translated into an additional check.
+The profile sets the commitment's squared norm bound to this exact integer
+`T_1^2` and computes a rigorous integer upper bound `ceil(sqrt(T_1^2))`.
+For Eq. (11)'s extracted-randomness term, the implementation uses the source's
+`24*sqrt(3r)*B*m*d*(k+1)*B'_{d,k}` bound with the conservative
+`B'_{d,k} <= d^k`, again rounding the square root upward. It checks the
+necessary q-side conditions `q > 2*T_1` and `q > 2*T'`; it does not check the
+lattice-reduction member of the minimum in Eq. (11) or establish M-SIS
+hardness. The code therefore validates arithmetic profile conditions, not
+the complete binding/security claim.
 
 #### Information still required before RSign implementation
 
@@ -895,24 +895,19 @@ separate from computational security under M-SIS/M-LWE.
 
 #### `T1`, `T'`, and `B_{d,k}`
 
-The supplied Section 6 excerpt gives
+The Section 6 excerpt gives
 \[
 T_1=\sqrt{(2d+2)\left(
 54\phi_1^4d^3k^3\beta(\beta-1)r^2
 +12\phi_2^2B^2m^2d^2r\right)}.
 \]
 The commitment is to be `T_1`-binding. This placement of `(2d+2)` inside the
-square root supersedes the earlier expression in this document. The previous
-numeric `T_1`/`2T_1` substitution and any downstream M-SIS conclusion using
-that old expression are stale and must be recomputed before use. The excerpt
-does not provide enough detail to validate a production binding profile.
-
-The excerpt also states that the extracted-randomness relation `R'_1/N`
-becomes \(24\sqrt{3r}Bmd(k+1)d^k\). Its notation and relationship to the
-generic `T'` and M-SIS bounds recorded in older notes are not defined by the
-excerpt. Do not use the prior numeric `T'`, `2T_1`, or M-SIS candidate
-calculations below as validated for this supplied source until their equations
-are reconciled and recomputed.
+square root supersedes the earlier expression in this document. The current
+profile code computes `T_1^2` exactly and uses a ceiling square root for its
+q-side check. For Eq. (11)'s extracted-randomness term, it applies the
+conservative `B'_{d,k} <= d^k` substitution. This is only the arithmetic
+q-side check; the lattice-reduction term and hardness estimate remain
+unverified.
 
 ### C. Modulus constraints and exact arithmetic candidates
 
@@ -1589,17 +1584,60 @@ or the complete Esgin ring signature.
 
 #### Still required before production use
 
-1. Implement and independently review a discrete-Gaussian provider with the
-   paper's exact `D_s` mass function and scale convention.
-2. Implement and review an exact Bernoulli-exponential provider for Algorithm
-   1. Floating-point approximate acceptance and ordinary PRNGs are not
-   substitutes.
+1. Connect the exact Gaussian sampler to a production Protocol 2 provider
+   using the paper's Section 6 scale profile and validate the joint repeated-run
+   distribution.
+2. Connect the exact Bernoulli-exponential sampler to Algorithm 1 with the
+   paper's parameters. Floating-point approximate acceptance and ordinary
+   PRNGs are not substitutes.
 3. Select/instantiate a hiding and binding `aCom` (or a precise random-oracle
    model) with canonical transcript serialization and domain separation.
-4. Finalize the production `q`, commitment bounds and exact Esgin parameter
-   profile; independently validate the associated M-LWE/M-SIS estimates.
+4. Independently validate the named profile's q selection, commitment bounds,
+   and associated M-LWE/M-SIS estimates before calling them production-ready.
 5. Review integer-lift and centered-residue semantics against the proof
    distribution and serialized response encoding, including rare Gaussian
    tails that cross the centered interval.
-6. Implement Protocol 2, the Esgin Fiat–Shamir ring-signature layer and its
-   tests. WCM remains deferred due to the documented paper inconsistencies.
+6. Implement production Fiat–Shamir transcript serialization and
+   hash-to-challenges, then complete and test the Esgin RSign/RVerify flow.
+   WCM remains deferred due to the documented paper inconsistencies.
+
+### Current implementation update: named parameter profiles
+
+The earlier parameter-selection notes above are historical; this
+update records the current code state. `ParameterProfile` contains named
+profiles for \(N=64,256,1024,4096\), with
+\((n,m,d,\log_2(q),k,\beta,r)\) equal to
+\((5,13,256,50,2,8,16)\),
+\((5,13,256,53,2,16,16)\),
+\((11,25,128,46,2,32,19)\), and
+\((21,50,64,47,2,64,22)\), respectively. It also sets \(B=1\),
+\(\phi_1=\phi_2=22\), and \(\lambda=128\), and computes \(v=k\beta\).
+
+The exact code-selected primes are \(1125899906826241\),
+\(9007199254740481\), \(119569584450049\), and \(140737488355201\),
+respectively. They are required by the implementation to satisfy
+\(q\equiv1\pmod{2d}\), a stronger condition than the paper's odd-\(q\)
+requirement. This makes \(X^d+1\) split over \(\mathbb F_q\) for these
+parameters; the resulting ring structure is a security concern requiring
+independent review, not a security improvement. For \(N=1024\), the selected
+prime has \(\log_2(q)\approx46.765\), rather than the paper row's rounded 46,
+to satisfy the implemented exact bounds and congruence.
+
+Validation checks \(d\ge7\), \(md\ge86\), \(N=\beta^k\), \(v=k\beta\), the
+strict repeated Assumption 1 using exact integer arithmetic, and the q-side
+of Eq. (11) using conservative integer square-root upper bounds for \(T_1\)
+and \(T'\). It does not evaluate Eq. (11)'s lattice-reduction member, run an
+M-SIS/M-LWE estimator, or verify \(\delta\le1.0045\). No hardness or security
+claim follows from the profile tests.
+
+The generic toy fixtures are now named `TestOnlySetupParameters` and use
+`RSetupForTesting`, `RKeygenForTesting`, `RSignForTesting`, and
+`RVerifyForTesting`. Production key-generation/sign/verify entry points
+reject TestOnly parameters. This gates accidental use of the tiny fixtures;
+it does not make the named parameter profiles production-secure.
+
+The profile source and its dedicated test are registered in CMake. The
+current full configured CTest run passed 21/21 tests, including optional
+Dilithium Round 2/3 tests. The demo CLI also builds and its key-generation
+smoke test succeeds. These results validate code paths and arithmetic checks
+only, not cryptographic security.

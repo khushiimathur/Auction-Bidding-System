@@ -20,8 +20,9 @@ using lattice_lrs::ring_signature::ChallengeSet;
 using lattice_lrs::ring_signature::ChallengeVector;
 using lattice_lrs::ring_signature::HashToChallenges;
 using lattice_lrs::ring_signature::RKeygen;
-using lattice_lrs::ring_signature::RSetup;
-using lattice_lrs::ring_signature::SetupParameters;
+using lattice_lrs::ring_signature::RKeygenForTesting;
+using lattice_lrs::ring_signature::RSetupForTesting;
+using lattice_lrs::ring_signature::TestOnlySetupParameters;
 using lattice_lrs::sampling::RandomSource;
 
 namespace {
@@ -70,8 +71,8 @@ public:
     }
 };
 
-SetupParameters test_parameters() {
-    return SetupParameters{
+TestOnlySetupParameters test_parameters() {
+    return TestOnlySetupParameters{
         Parameters{1, 2, 1, 3, z(101), z(3),
                    SquaredNormBound(z(100000), z(1))},
         2};
@@ -98,7 +99,8 @@ bool throws_runtime_error(const std::function<void()>& operation) {
 void test_setup_challenge_set_and_hash_interface() {
     ZeroByteSource random;
     const auto hash = std::make_shared<FirstChallenges>();
-    const auto public_parameters = RSetup(test_parameters(), hash, random);
+    const auto public_parameters =
+        RSetupForTesting(test_parameters(), hash, random);
 
     const ChallengeSet& challenges = public_parameters.challenge_set();
     require(challenges.size() == 6, "challenge set must contain 2d elements");
@@ -115,7 +117,7 @@ void test_setup_challenge_set_and_hash_interface() {
                 mapped[1] == challenges[1],
             "injected hash interface must produce the configured number of C-valued challenges");
 
-    const auto invalid_parameters = RSetup(
+    const auto invalid_parameters = RSetupForTesting(
         test_parameters(), std::make_shared<InvalidHash>(), random);
     require(throws_runtime_error([&] {
                 (void)invalid_parameters.hash_to_challenges({0x01});
@@ -125,11 +127,11 @@ void test_setup_challenge_set_and_hash_interface() {
 
 void test_keygen_commitment_consistency_and_distribution() {
     ZeroByteSource setup_random;
-    const auto public_parameters = RSetup(
+    const auto public_parameters = RSetupForTesting(
         test_parameters(), std::make_shared<FirstChallenges>(), setup_random);
 
     ZeroByteSource key_random;
-    const auto key_pair = RKeygen(public_parameters, key_random);
+    const auto key_pair = RKeygenForTesting(public_parameters, key_random);
     const auto& parameters = public_parameters.commitment_key().parameters();
     require(key_pair.secret_key.randomness.size() == parameters.m,
             "secret key must contain m ring elements");
@@ -157,59 +159,64 @@ void test_invalid_parameters_and_random_failures() {
     ZeroByteSource random;
     const auto hash = std::make_shared<FirstChallenges>();
 
-    SetupParameters no_hash_outputs = test_parameters();
+    TestOnlySetupParameters no_hash_outputs = test_parameters();
     no_hash_outputs.hash_output_count = 0;
     require(throws_invalid_argument([&] {
-                (void)RSetup(no_hash_outputs, hash, random);
+                (void)RSetupForTesting(no_hash_outputs, hash, random);
             }),
             "setup must reject an empty hash output vector");
 
-    SetupParameters noninjective_bound = test_parameters();
+    TestOnlySetupParameters noninjective_bound = test_parameters();
     noninjective_bound.commitment.q = z(5);
     noninjective_bound.commitment.B = z(3);
     require(throws_invalid_argument([&] {
-                (void)RSetup(noninjective_bound, hash, random);
+                (void)RSetupForTesting(noninjective_bound, hash, random);
             }),
             "setup must reject S_B coefficients that are ambiguous modulo q");
 
-    SetupParameters invalid_modulus = test_parameters();
+    TestOnlySetupParameters invalid_modulus = test_parameters();
     invalid_modulus.commitment.q = z(100);
     require(throws_invalid_argument([&] {
-                (void)RSetup(invalid_modulus, hash, random);
+                (void)RSetupForTesting(invalid_modulus, hash, random);
             }),
             "setup must reject an even commitment modulus");
 
-    SetupParameters invalid_dimensions = test_parameters();
+    TestOnlySetupParameters invalid_dimensions = test_parameters();
     invalid_dimensions.commitment.m = 0;
     require(throws_invalid_argument([&] {
-                (void)RSetup(invalid_dimensions, hash, random);
+                (void)RSetupForTesting(invalid_dimensions, hash, random);
             }),
             "setup must reject invalid commitment dimensions");
 
     require(throws_invalid_argument([&] {
-                (void)RSetup(test_parameters(), nullptr, random);
+                (void)RSetupForTesting(test_parameters(), nullptr, random);
             }),
             "setup must reject a missing hash-to-challenges provider");
 
     FailingRandomSource failing;
     bool setup_failure_propagated = false;
     try {
-        (void)RSetup(test_parameters(), hash, failing);
+        (void)RSetupForTesting(test_parameters(), hash, failing);
     } catch (const std::runtime_error&) {
         setup_failure_propagated = true;
     }
     require(setup_failure_propagated,
             "RSetup must propagate commitment-key randomness failures");
 
-    const auto public_parameters = RSetup(test_parameters(), hash, random);
+    const auto public_parameters =
+        RSetupForTesting(test_parameters(), hash, random);
     bool keygen_failure_propagated = false;
     try {
-        (void)RKeygen(public_parameters, failing);
+        (void)RKeygenForTesting(public_parameters, failing);
     } catch (const std::runtime_error&) {
         keygen_failure_propagated = true;
     }
     require(keygen_failure_propagated,
             "RKeygen must propagate secret-key sampling failures");
+    require(throws_invalid_argument([&] {
+                (void)RKeygen(public_parameters, random);
+            }),
+            "production RKeygen must reject TestOnly setup parameters");
 }
 
 }  // namespace

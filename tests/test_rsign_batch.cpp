@@ -408,12 +408,13 @@ struct TestContext {
 
 TestContext make_context(ZeroByteSource& random) {
     const std::size_t degree = 86;
-    SetupParameters setup{
+    TestOnlySetupParameters setup{
         Parameters{1, 1, 4, degree, z(1000000007), z(1),
                    SquaredNormBound(z(1) << 256, z(1))},
         2};
     auto hash = std::make_shared<InputDependentHash>();
-    PublicParameters public_parameters = RSetup(setup, hash, random);
+    PublicParameters public_parameters =
+        RSetupForTesting(setup, hash, random);
     const CommitmentKey& key = public_parameters.commitment_key();
     const auto& p = key.parameters();
     const Polynomial zero(p.degree, p.q);
@@ -476,7 +477,22 @@ void test_batch_restart_global_rejections_and_verification() {
     ScriptedRejection rejection({false, true, true}, {false, true});
     TestEncoder encoder;
 
-    const RSignSignature signature = RSign(
+    bool production_sign_rejected = false;
+    try {
+        (void)RSign(context.public_parameters, context.proof_parameters,
+                    context.ring, context.witness, {0x41, 0x42}, encoder,
+                    gaussian, auxiliary, rejection, random);
+    } catch (const std::invalid_argument&) {
+        production_sign_rejected = true;
+    }
+    require(production_sign_rejected,
+            "production RSign must reject TestOnly setup parameters");
+    require(!RVerify(context.public_parameters, context.proof_parameters,
+                     context.ring, {0x41, 0x42}, RSignSignature{}, encoder,
+                     auxiliary),
+            "production RVerify must reject TestOnly setup parameters");
+
+    const RSignSignature signature = RSignForTesting(
         context.public_parameters, context.proof_parameters, context.ring,
         context.witness, {0x41, 0x42}, encoder, gaussian, auxiliary,
         rejection, random);
@@ -527,21 +543,21 @@ void test_batch_restart_global_rejections_and_verification() {
                 gaussian.requests[0].second == 0 &&
                 gaussian.requests[1].second == 0,
             "Gaussian draws must be issued afresh for each run");
-    require(RVerify(context.public_parameters, context.proof_parameters,
+    require(RVerifyForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, {0x41, 0x42}, signature, encoder, auxiliary),
             "the complete batch signature must verify");
 
     RSignSignature bad_challenges = signature;
     bad_challenges.challenges[0] =
         context.public_parameters.challenge_set().front();
-    require(!RVerify(context.public_parameters, context.proof_parameters,
+    require(!RVerifyForTesting(context.public_parameters, context.proof_parameters,
                      context.ring, {0x41, 0x42}, bad_challenges, encoder,
                      auxiliary),
             "verification must reject a changed challenge vector");
     RSignSignature bad_response = signature;
     bad_response.responses[0].z[0] =
         bad_response.responses[0].z[0] + Polynomial(86, z(1000000007), {z(1)});
-    require(!RVerify(context.public_parameters, context.proof_parameters,
+    require(!RVerifyForTesting(context.public_parameters, context.proof_parameters,
                      context.ring, {0x41, 0x42}, bad_response, encoder,
                      auxiliary),
             "verification must reject an invalid transcript in any run");
@@ -549,7 +565,7 @@ void test_batch_restart_global_rejections_and_verification() {
     bad_later_response.responses[1].z[0] =
         bad_later_response.responses[1].z[0] +
         Polynomial(86, z(1000000007), {z(1)});
-    require(!RVerify(context.public_parameters, context.proof_parameters,
+    require(!RVerifyForTesting(context.public_parameters, context.proof_parameters,
                      context.ring, {0x41, 0x42}, bad_later_response, encoder,
                      auxiliary),
             "verification must reject a failure in a later execution");
@@ -564,11 +580,11 @@ void test_transcript_binding_for_all_inputs() {
     PatternedByteSource random;
     BindingAwareEncoder encoder;
 
-    const RSignSignature signature = RSign(
+    const RSignSignature signature = RSignForTesting(
         context.public_parameters, context.proof_parameters, context.ring,
         context.witness, {0x41, 0x42}, encoder, gaussian, auxiliary,
         rejection, random);
-    require(RVerify(context.public_parameters, context.proof_parameters,
+    require(RVerifyForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, {0x41, 0x42}, signature, encoder, auxiliary),
             "binding-aware transcript should verify before tampering");
 
@@ -680,7 +696,7 @@ void test_exact_z_and_center_ordering() {
     PatternedByteSource random;
     TestEncoder encoder;
 
-    const RSignSignature signature = RSign(
+    const RSignSignature signature = RSignForTesting(
         context.public_parameters, context.proof_parameters, context.ring,
         context.witness, {0x21}, encoder, gaussian, auxiliary, rejection, random);
     require(rejection.recorded_stages.size() == 2,
@@ -781,7 +797,7 @@ void test_provider_and_entropy_failures() {
     ZeroByteSource random;
     bool rejection_failure_propagated = false;
     try {
-        (void)RSign(context.public_parameters, context.proof_parameters,
+        (void)RSignForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, context.witness, {}, encoder, gaussian,
                     auxiliary, rejection, random);
     } catch (const std::runtime_error&) {
@@ -805,7 +821,7 @@ void test_provider_and_entropy_failures() {
     ScriptedRejection accepted({true}, {true});
     bool unsupported_reported = false;
     try {
-        (void)RSign(context.public_parameters, context.proof_parameters,
+        (void)RSignForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, context.witness, {}, encoder,
                     unsupported_gaussian, auxiliary, accepted, random);
     } catch (const UnsupportedRSignConfiguration&) {
@@ -817,7 +833,7 @@ void test_provider_and_entropy_failures() {
     UnsupportedRejection unsupported_rejection;
     bool unsupported_rejection_reported = false;
     try {
-        (void)RSign(context.public_parameters, context.proof_parameters,
+        (void)RSignForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, context.witness, {}, encoder, gaussian,
                     auxiliary, unsupported_rejection, random);
     } catch (const UnsupportedRSignConfiguration&) {
@@ -829,7 +845,7 @@ void test_provider_and_entropy_failures() {
     ThrowingGaussian throwing_gaussian;
     bool gaussian_failure_propagated = false;
     try {
-        (void)RSign(context.public_parameters, context.proof_parameters,
+        (void)RSignForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, context.witness, {}, encoder,
                     throwing_gaussian, auxiliary, accepted, random);
     } catch (const std::runtime_error&) {
@@ -842,7 +858,7 @@ void test_provider_and_entropy_failures() {
     ScriptedRejection unused({true}, {true});
     bool entropy_failure_propagated = false;
     try {
-        (void)RSign(context.public_parameters, context.proof_parameters,
+        (void)RSignForTesting(context.public_parameters, context.proof_parameters,
                     context.ring, context.witness, {}, encoder, gaussian,
                     auxiliary, unused, failing_random);
     } catch (const std::runtime_error&) {
