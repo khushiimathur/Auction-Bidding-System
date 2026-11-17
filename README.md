@@ -14,14 +14,83 @@ The current C++ backend includes:
 - A Protocol 1 binary proof.
 - Protocol 2 one-out-of-many proof prover/verifier components with an explicit
   challenge and an injected auxiliary-commitment provider.
-- Discrete-Gaussian and Bernoulli-exponential sampling providers using the
-  shared `RandomSource` interface.
+- Exact Bernoulli-exponential, Bernoulli-\(\pi\)-exponential, \(D_\sigma\), and
+  \(D_s\) sampling implementations using the shared `RandomSource` interface.
+- RSign/RVerify Section 6 batch orchestration, with injected transcript,
+  hash-to-challenges, Gaussian, auxiliary-commitment, and global-rejection
+  providers. The orchestration is implemented; production providers are not.
 - Dilithium Round 2 and Round 3 reference source trees. Optional isolated
   CMake tests can build the reference implementations; they are not currently
   part of the PQ-LRS proof flow.
 
 These are research components, not a claim of cryptographic security. Passing
 tests does not establish protocol correctness or production suitability.
+
+## Cryptographic Parameter Configuration
+
+The paper reference below is the \(N=64\) row of Table 3 in Esgin et al.,
+[*Short Lattice-based One-out-of-Many Proofs and Applications to Ring
+Signatures* (2018/773)](https://eprint.iacr.org/2018/773). It is a paper
+reference, not the configuration currently used for signing by this project.
+
+### Esgin Paper Reference Parameters
+
+| Parameter | Esgin paper | Current implementation | Status / Notes |
+|---|---:|---|---|
+| \(N\) | 64 | No production RSign profile; demo lists five bidders for lookup only; test ring: 4 | \(N=\beta^k=8^2=64\) in the paper row. |
+| \(n\) | 5 | Demo: 1; RSign test fixture: 1 | No production profile. |
+| \(m\) | 13 | Demo: 2; RSign test fixture: 1 | No production profile. |
+| \(v\) | 16, derived as \(k\beta\) | Demo: 1; RSign test fixture: 4 | Derived from Appendix D; not a Table 3 column. |
+| \(d\) | 256 | Demo: 3; RSign test fixture: 86 | No production profile. |
+| \(q\) | \(\log_2(q)=50\), rounded | Demo: 101; RSign test fixture: 1,000,000,007 | The table does not specify an exact \(q\); no production \(q\) is selected. |
+| \(B\) | 1 | Demo: 3; RSign test fixture: 1 | No production bound. |
+| \(k\) | 2 | Caller-supplied; RSign test fixture: 2 | No production profile. |
+| \(\beta\) | 8 | Caller-supplied; RSign test fixture: 2 | No production profile. |
+| \(r\) | 16 | `hash_output_count` is caller-supplied; demo setup: 1, RSign test: 2 | The demo count is setup metadata; the demo does not sign. |
+| \(\lambda\) | 128 | Input to `ComputeRSignRepetitionCount`; test uses 128 | No production security parameter is configured. |
+| \(\phi_1,\phi_2\) | \(\phi_1=\phi_2=2^2=4\) | `PositiveRational` values are caller-supplied; RSign test: 1 and 1,000,000,000 | No production rejection profile. The paper notation is \(2^2\), not “22”. |
+| \(T_{\mathrm{com}}^2\) | Derived commitment bounds; not a Table 3 value | Demo: \(100000/1\); RSign test fixture: \(2^{256}/1\) | These are demo/test values, not finalized production bounds. |
+| \(\delta\) | \(\leq 1.0045\) | Not configured or checked by the implementation | Paper-reported lattice-security analysis target only. |
+
+The paper defines \(R=\mathbb{Z}[X]/(X^d+1)\) and \(R_q=R/qR\). Its
+commitment matrices use
+\(G'_r\in R_q^{n\times(m-n)}\) and \(G_m\in R_q^{n\times v}\). For this row,
+Appendix D derives \(v=k\beta=16\), so the paper's M-LWE instance is
+\(\mathrm{M\text{-}LWE}_{8,5,q,1}\). The paper reports approximate sizes of
+774 KB per signature, 7.81 KB per public key, and 0.81 KB per secret key;
+these are not sizes of a serialization implemented here.
+
+The paper's stated choices include \(\beta=8\) and \(k=2\) for \(N=64\);
+\(B=1\), following prior work and checked in its M-LWE analysis; \(r=16\)
+repetitions for the target protocol soundness \(\lambda=128\); and the
+Section 6.1 lattice-security checks targeting \(\delta\leq1.0045\).
+These are the paper's reported choices and analysis, not validations performed
+by this code. In particular, \(\lambda=128\) is a protocol soundness target;
+it does not by itself establish 128-bit post-quantum computational security.
+
+### Demo-Only Parameters
+
+**EDUCATIONAL DEMO-ONLY parameters — NOT secure production parameters and NOT
+the Esgin paper reference configuration.**
+
+| Parameter | Streamlit demo value |
+|---|---:|
+| \(n\) | 1 |
+| \(m\) | 2 |
+| \(v\) | 1 |
+| \(d\) | 3 |
+| \(q\) | 101 |
+| \(B\) | 3 |
+
+The C++ demo wrapper also sets \(T_{\mathrm{com}}^2=100000/1\) and a setup
+`hash_output_count` of 1. That count is not an RSign repetition configuration:
+the demo only generates keys and performs public-key membership lookup.
+
+Other explicit values are test fixtures, not a selected cryptographic profile.
+For example, the RSign orchestration fixture uses
+\((n,m,v,d,q,B)=(1,1,4,86,1000000007,1)\), \(k=2\), \(\beta=2\),
+`hash_output_count` \(=2\), and test rejection parameters. These values
+exercise interfaces and control flow only.
 
 ## Technologies and dependencies
 
@@ -116,20 +185,61 @@ cmake --build build-dilithium --parallel
 ctest --test-dir build-dilithium --output-on-failure
 ```
 
-## Limitations
+## Implementation Status
 
-The following work is not complete:
+### Completed
 
-- The full Esgin ring-signature flow and its end-to-end integration.
-- Fiat–Shamir transcript/challenge integration; Protocol 2 currently takes an
-  explicit challenge.
-- A concrete `aCom` construction; the auxiliary commitment remains injected
-  through a provider interface.
-- Finalized protocol parameters.
-- WCM linkability integration.
-- Production security validation, independent cryptographic review, and
-  platform-wide validation.
-- A complete sealed-bid auction application.
+- Polynomial and matrix arithmetic for the negacyclic polynomial ring.
+- OS-backed randomness for macOS, Windows, and Linux.
+- Commitment-key generation, the commitment map, randomized commitment, and
+  opening checks.
+- Protocol 1 binary proof prover/verifier and its rejection-sampling path.
+- Exact Bernoulli-exponential and Bernoulli-\(\pi\)-exponential providers, plus
+  exact \(D_\sigma\) and \(D_s\) sampler implementations.
+- Protocol 2 polynomial expansion and \(E_j\) construction, response
+  generation, integer-lift handling, joint response rejection, and
+  prover/verifier logic.
+- RSign/RVerify batch control flow: repeated executions, transcript and
+  hash-to-challenges interfaces, global rejection-provider calls, whole-batch
+  retries, and verification of all executions. The interfaces are wired into
+  the orchestration; this does not mean the injected providers are implemented.
+- Isolated Dilithium Round 2 and Round 3 reference tests. They do not integrate
+  Dilithium signatures into PQ-LRS or WCM.
+- A Streamlit educational demo for C++ key generation and public-key ring
+  membership. It does not generate or verify an Esgin signature.
 
-Do not treat this project as production-ready or as a completed secure auction
-scheme.
+The current configured build registers 20 CTest tests and the latest full run
+passed 20/20, including the optional Dilithium tests. A fresh default CMake
+configuration disables those two optional tests.
+
+### In Progress
+
+- Production RSign/RVerify provider configuration and end-to-end validation.
+- The Section 6 distributions, their batch scale profile, and exact global
+  rejection parameters. Existing exact samplers do not by themselves establish
+  that the required repeated-run input laws are produced.
+
+### Not Yet Implemented
+
+- A finalized production parameter profile and exact modulus selection. The
+  paper reports rounded \(\log_2(q)=50\), not an exact modulus for this row.
+- A concrete cryptographically justified auxiliary commitment `aCom`; the
+  current API is an injected provider.
+- Production canonical Fiat-Shamir transcript serialization and a concrete
+  hash-to-challenges implementation.
+- Production Section 6 Gaussian scale and global rejection providers.
+- WCM linkability tag generation/verification and Dilithium OTS integration.
+- End-to-end real-signature tests and independent cryptographic security
+  validation.
+
+### Security and Production Readiness
+
+The Section 6 batch coordinator and its tests do not establish the correctness
+of injected cryptographic providers. The test providers are orchestration
+doubles, not cryptographic implementations. The exact repeated-run raw
+distribution profile and the statistical-distance qualification in Appendix E
+remain unresolved. Integer lifts are retained through the implemented global
+rejection interface, but canonical signature/transcript serialization is not
+finalized. No claim is made that the complete PQ-LRS or WCM scheme is secure,
+fully post-quantum validated, or production-ready. This is not a complete
+sealed-bid auction application.
