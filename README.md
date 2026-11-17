@@ -28,8 +28,8 @@ tests does not establish protocol correctness or production suitability.
 - C++17 and CMake 3.16 or newer.
 - NTL and GMP development headers and libraries.
 - A C compiler when the optional Dilithium reference tests are enabled.
-- Python is only applicable to auxiliary test/environment tooling; this
-  repository does not currently provide a Python package or bindings.
+- Python 3 and Streamlit for the optional local demo in `python/demo/`. It
+  invokes a small C++ wrapper; it is not a Python binding to the backend.
 
 ## Project layout
 
@@ -48,7 +48,9 @@ Lattice_LRS/
 ├── docs/                        Design notes and mathematical audits
 ├── tests/                       C++ tests and test helpers
 ├── bindings/                    Reserved; currently empty
-├── python/                      Reserved; currently empty
+├── python/
+│   ├── demo/                    Optional Streamlit keygen/ring-membership demo
+│   └── ring_demo.py             Basic public-key membership demonstration
 ├── CMakeLists.txt
 └── cpp_backend/CMakeLists.txt
 ```
@@ -59,6 +61,16 @@ submodules if retaining their upstream histories is desired; a normal clone
 must then initialize submodules. Do not stage these nested repositories as
 ordinary directories, since Git will record gitlinks rather than their source
 files.
+
+## Platform support
+
+The C++ backend has OS-specific `SystemRandomSource` implementations for
+macOS, Windows, and Linux. The rest of the backend uses C++17, but the project
+is not OS-independent of its NTL/GMP and compiler toolchains. This platform
+support describes the available code paths; it is not a claim that the full
+build and test suite has been validated on every platform. The optional AVX2
+Dilithium source directories are architecture-specific and are not part of the
+default backend build.
 
 ## Build and test on macOS
 
@@ -75,6 +87,23 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
+
+## Build and test on Windows
+
+Use a CMake-compatible C++17 toolchain (for example, Visual Studio Build Tools
+with the C++ workload) and NTL/GMP libraries built for that same toolchain.
+If those dependencies are installed under a nonstandard prefix, set
+`CMAKE_PREFIX_PATH` to that prefix in PowerShell:
+
+```powershell
+$env:CMAKE_PREFIX_PATH = "C:\path\to\ntl-gmp-prefix"
+cmake -S . -B build
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+```
+
+Replace the example prefix with the directory containing the dependency
+`include` and `lib` directories.
 
 The optional isolated Dilithium tests are disabled by default. Enable them
 with a C compiler available:

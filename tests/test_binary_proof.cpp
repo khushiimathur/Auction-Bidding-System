@@ -548,7 +548,7 @@ void test_protocol_one_preserves_gaussian_integer_lifts() {
     require(response->f_nonzero[0].coefficient(0) == z(2),
             "the response should reduce q+2 only when encoding the ring element");
     require(!rejection_exponential.arguments.empty() &&
-                rejection_exponential.arguments.front().first == -2 * p.q - 6 &&
+                rejection_exponential.arguments.front().first == -2 * p.q - 28 &&
                 rejection_exponential.arguments.front().second == z(2),
             "the rejection exponent must use the unreduced q+1 Gaussian lift");
 }
@@ -750,14 +750,14 @@ void test_rejection_exponent_sign_branches() {
         }
     };
 
-    // With phi1=1, K^2=k=1, witness digit 1, and first mask a, the first
-    // Protocol 1 log probability is exactly -a-2: a=-3 => +1, a=-2 => 0,
-    // and a=0 => -2. These are deterministic branch tests, not sampler tests.
-    run_case(-3, 1, nullptr, nullptr);
-    run_case(-2, 1, nullptr, nullptr);
-    const NTL::ZZ negative_numerator = z(-4);
+    // With phi1=1, K^2=k=1, witness digit 1, and first mask a, the corrected
+    // first Protocol 1 log probability is -a-13: a=-14 => +1, a=-13 => 0,
+    // and a=-12 => -1. These are deterministic branch tests, not sampler tests.
+    run_case(-14, 1, nullptr, nullptr);
+    run_case(-13, 1, nullptr, nullptr);
+    const NTL::ZZ negative_numerator = z(-2);
     const NTL::ZZ negative_denominator = z(2);
-    run_case(0, 2, &negative_numerator, &negative_denominator);
+    run_case(-12, 2, &negative_numerator, &negative_denominator);
 }
 
 void test_invalid_witness_and_parameters() {

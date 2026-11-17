@@ -102,10 +102,10 @@ void test_positive_and_zero_exponents_accept_deterministically() {
     RecordingExponential exponential(false);
 
     require(AcceptProtocol2JointResponse(
-                key, phi2, make_input(-2), random, exponential),
+                key, phi2, make_input(-13), random, exponential),
             "positive exponent must accept deterministically");
     require(AcceptProtocol2JointResponse(
-                key, phi2, make_input(-1), random, exponential),
+                key, phi2, make_input(-12), random, exponential),
             "zero exponent must accept deterministically");
     require(exponential.calls == 0,
             "nonnegative exponents must not invoke the exponential provider");
@@ -121,9 +121,26 @@ void test_negative_exponent_uses_exact_rational_provider() {
                 key, phi2, make_input(0), random, exponential),
             "negative exponent result must come from the provider");
     require(exponential.calls == 1, "negative exponent must invoke the provider once");
-    require(exponential.last_numerator == z(-6) &&
+    // K^2=3, ||C||^2=3, and <Z,C>=0:
+    // E=(-75+3)/6=-12. The previous -1/phi constant yielded -6/6.
+    require(exponential.last_numerator == z(-72) &&
                 exponential.last_denominator == z(6),
-            "provider must receive the exact Protocol 2 rational exponent");
+            "provider must receive the corrected exact rational exponent");
+}
+
+void test_inner_product_sign_is_preserved() {
+    const CommitmentKey key = make_key();
+    const PositiveRational phi2(z(1), z(1));
+    FailingRandomSource random;
+    RecordingExponential exponential(false);
+
+    (void)AcceptProtocol2JointResponse(
+        key, phi2, make_input(1), random, exponential);
+    // <Z,C>=3 and ||C||^2=3, so E=(-75-6+3)/6=-13.
+    require(exponential.calls == 1 &&
+                exponential.last_numerator == z(-78) &&
+                exponential.last_denominator == z(6),
+            "the response-center inner-product sign must remain negative");
 }
 
 void test_integer_lifts_are_used_without_modular_reduction() {
@@ -137,7 +154,7 @@ void test_integer_lifts_are_used_without_modular_reduction() {
     require(AcceptProtocol2JointResponse(
                 key, phi2, input, random, exponential),
             "provider's decision must be returned");
-    require(exponential.last_numerator == z(-36) &&
+    require(exponential.last_numerator == z(-102) &&
                 exponential.last_denominator == z(6),
             "rejection exponent must use the supplied integer lift, not a residue lift");
 }
@@ -204,6 +221,7 @@ int main() {
     try {
         test_positive_and_zero_exponents_accept_deterministically();
         test_negative_exponent_uses_exact_rational_provider();
+        test_inner_product_sign_is_preserved();
         test_integer_lifts_are_used_without_modular_reduction();
         test_invalid_dimensions_and_center_bound();
         test_provider_and_random_source_failures_propagate();

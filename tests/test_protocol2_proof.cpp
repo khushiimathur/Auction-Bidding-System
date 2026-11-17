@@ -66,10 +66,12 @@ public:
                     RandomSource&) override {
         require(numerator < 0 && denominator > 0,
                 "rejection provider must receive a negative rational exponent");
+        arguments.emplace_back(numerator, denominator);
         ++calls;
         return true;
     }
     std::size_t calls = 0;
+    std::vector<std::pair<NTL::ZZ, NTL::ZZ>> arguments;
 };
 
 class RejectFirst final : public BernoulliExponentialProvider {
@@ -216,6 +218,9 @@ void test_round_trip_and_protocol2_widths() {
             "Protocol 2 prover output should verify");
     require(exponential.calls == 2,
             "the first-stage and joint rejection decisions should both run");
+    require(exponential.arguments.front() ==
+                std::pair<NTL::ZZ, NTL::ZZ>{z(-25), z(2)},
+            "Protocol 2 first-stage rejection must use the corrected -12/phi term");
 
     const NTL::ZZ p2_sigma_squared = z(3 * key.parameters().m *
                                         key.parameters().degree);

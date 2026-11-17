@@ -41,14 +41,17 @@ add_library(lattice_lrs_backend STATIC
     src/sampling/sampler.cpp
     src/commitment/commitment.cpp
     src/proofs/bernoulli_exponential.cpp
+    src/proofs/bernoulli_pi_exponential.cpp
     src/proofs/binary_proof.cpp
     src/proofs/discrete_gaussian.cpp
+    src/proofs/discrete_gaussian_s.cpp
     src/proofs/protocol2_commitment.cpp
     src/proofs/protocol2_polynomial.cpp
     src/proofs/protocol2_proof.cpp
     src/proofs/protocol2_rejection.cpp
     src/proofs/protocol2_response.cpp
     src/proofs/protocol2_response_lift.cpp
+    src/ring_signature/ring_signature.cpp
 )
 target_include_directories(lattice_lrs_backend PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

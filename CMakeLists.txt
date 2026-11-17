@@ -48,6 +48,10 @@ add_executable(discrete_gaussian_test tests/test_discrete_gaussian.cpp)
 target_link_libraries(discrete_gaussian_test PRIVATE lattice_lrs_backend)
 add_test(NAME discrete_gaussian_test COMMAND discrete_gaussian_test)
 
+add_executable(discrete_gaussian_s_test tests/test_discrete_gaussian_s.cpp)
+target_link_libraries(discrete_gaussian_s_test PRIVATE lattice_lrs_backend)
+add_test(NAME discrete_gaussian_s_test COMMAND discrete_gaussian_s_test)
+
 add_executable(protocol2_polynomial_expansion_test
     tests/test_protocol2_polynomial_expansion.cpp)
 target_link_libraries(protocol2_polynomial_expansion_test PRIVATE lattice_lrs_backend)
@@ -82,6 +86,16 @@ add_test(NAME protocol2_response_rejection_integration_test
 add_executable(protocol2_proof_test tests/test_protocol2_proof.cpp)
 target_link_libraries(protocol2_proof_test PRIVATE lattice_lrs_backend)
 add_test(NAME protocol2_proof_test COMMAND protocol2_proof_test)
+
+add_executable(ring_signature_setup_keygen_test
+    tests/test_ring_signature_setup_keygen.cpp)
+target_link_libraries(ring_signature_setup_keygen_test PRIVATE lattice_lrs_backend)
+add_test(NAME ring_signature_setup_keygen_test
+    COMMAND ring_signature_setup_keygen_test)
+
+add_executable(rsign_batch_test tests/test_rsign_batch.cpp)
+target_link_libraries(rsign_batch_test PRIVATE lattice_lrs_backend)
+add_test(NAME rsign_batch_test COMMAND rsign_batch_test)
 
 option(LATTICE_LRS_BUILD_DILITHIUM_TESTS
     "Build isolated tests against both official Dilithium reference implementations"

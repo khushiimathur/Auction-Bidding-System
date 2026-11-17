@@ -308,7 +308,7 @@ bool rej_accepts(const std::vector<NTL::ZZ>& z,
     const NTL::ZZ t = phi.denominator;
     const NTL::ZZ exponent_denominator = 2 * p * p * K_squared;
     const NTL::ZZ exponent_numerator =
-        -(2 * p * t + t * t) * K_squared +
+        -(24 * p * t + t * t) * K_squared +
         t * t * (-2 * inner_product + c_norm_squared);
     if (exponent_numerator >= 0) {
         // Algorithm 1 compares a uniform u in [0,1) with exp(r). When r >= 0,

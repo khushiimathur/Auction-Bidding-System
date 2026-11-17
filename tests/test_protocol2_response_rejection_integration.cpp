@@ -101,14 +101,14 @@ void test_nonnegative_exponents_accept_without_provider() {
 
     const Protocol2IntegerLiftResponses positive =
         ComputeProtocol2IntegerLiftResponses(
-            x, 2, {z(4), z(-4)}, {{z(-12), z(12)}, {z(0), z(0)}},
-            {z(4), z(-4)}, {z(-12), z(-12)},
-            {z(4), z(-4)}, {z(-12), z(-12)});
+            x, 2, {z(4), z(-4)}, {{z(-56), z(56)}, {z(0), z(0)}},
+            {z(4), z(-4)}, {z(-56), z(-56)},
+            {z(4), z(-4)}, {z(-56), z(-56)});
     const Protocol2JointRejectionInput positive_input = with_centers(
         positive, {z(-4), z(4)}, {z(4), z(4)}, {z(4), z(4)});
-    require(positive.z_lift == std::vector<NTL::ZZ>{z(8), z(-8)} &&
-                positive.z_b_lift == std::vector<NTL::ZZ>{z(-8), z(-8)} &&
-                positive.z_c_lift == std::vector<NTL::ZZ>{z(-8), z(-8)},
+    require(positive.z_lift == std::vector<NTL::ZZ>{z(52), z(-52)} &&
+                positive.z_b_lift == std::vector<NTL::ZZ>{z(-52), z(-52)} &&
+                positive.z_c_lift == std::vector<NTL::ZZ>{z(-52), z(-52)},
             "positive-exponent responses must match the hand calculation");
     require(AcceptProtocol2JointResponse(
                 key, phi2, positive_input, random, exponential),
@@ -116,14 +116,14 @@ void test_nonnegative_exponents_accept_without_provider() {
 
     const Protocol2IntegerLiftResponses zero =
         ComputeProtocol2IntegerLiftResponses(
-            x, 2, {z(4), z(-4)}, {{z(-8), z(8)}, {z(0), z(0)}},
-            {z(4), z(-4)}, {z(-8), z(-8)},
-            {z(4), z(-4)}, {z(-8), z(-8)});
+            x, 2, {z(4), z(-4)}, {{z(-52), z(52)}, {z(0), z(0)}},
+            {z(4), z(-4)}, {z(-52), z(-52)},
+            {z(4), z(-4)}, {z(-52), z(-52)});
     const Protocol2JointRejectionInput zero_input = with_centers(
         zero, {z(-4), z(4)}, {z(4), z(4)}, {z(4), z(4)});
-    require(zero.z_lift == std::vector<NTL::ZZ>{z(4), z(-4)} &&
-                zero.z_b_lift == std::vector<NTL::ZZ>{z(-4), z(-4)} &&
-                zero.z_c_lift == std::vector<NTL::ZZ>{z(-4), z(-4)},
+    require(zero.z_lift == std::vector<NTL::ZZ>{z(48), z(-48)} &&
+                zero.z_b_lift == std::vector<NTL::ZZ>{z(-48), z(-48)} &&
+                zero.z_c_lift == std::vector<NTL::ZZ>{z(-48), z(-48)},
             "zero-exponent responses must match the hand calculation");
     require(AcceptProtocol2JointResponse(
                 key, phi2, zero_input, random, exponential),
@@ -157,9 +157,9 @@ void test_negative_exponent_and_unreduced_lifts() {
             "negative exponent must use the provider's rejection result");
 
     // Hand calculation: K^2=96, ||C||^2=43, <Z,C>=149, hence
-    // numerator=-3*96 + (-2*149+43)=-543 and denominator=2*96=192.
+    // numerator=-25*96 + (-2*149+43)=-2655 and denominator=2*96=192.
     require(exponential.calls == 1 &&
-                exponential.last_numerator == z(-543) &&
+                exponential.last_numerator == z(-2655) &&
                 exponential.last_denominator == z(192),
             "joint rejection exponent must match the independent calculation");
     require(input.z_b_lift[0] == z(-34),

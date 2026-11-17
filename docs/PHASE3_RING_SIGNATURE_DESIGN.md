@@ -147,7 +147,7 @@ distribution, up to the paper's stated statistical error.
 
 Algorithm 1 (p. 8) defines `Rej(z,c,phi,K)`: set
 \(\sigma=\phi K\) and
-\(\mu(\phi)=\exp(1/\phi+1/(2\phi^2))\); draw uniform `u` and accept with
+\(\mu(\phi)=\exp(12/\phi+1/(2\phi^2))\); draw uniform `u` and accept with
 probability
 \[
  \mu(\phi)^{-1}\exp\left(\frac{-2\langle z,c\rangle+\|c\|^2}
@@ -245,32 +245,310 @@ rejection sampling.
 
 ### Ring signature algorithms (Section 6, pp. 18–20)
 
-Let the selected parameter row determine `n,m,d,q,k,beta,r`, and let
+This subsection follows the Section 6 excerpt supplied for the RSign design
+review. It supersedes conflicting RSign sampling and `T_1` statements in older
+project notes. Let `N=beta^k`, `2 <= beta <= N`, and
 \(\mathcal C=\{X^\omega:0\leq\omega<2d\}\subset R_q\).
 
-1. **`RSetup(1^lambda)`**: generate commitment key `ck` with `CKeygen`; choose
-   random-oracle hash `H : {0,1}* -> C^r`; publish `pp=(ck,H)`.
-2. **`RKeygen(pp)`**: sample \(r\leftarrow S_B^m\), set
-   \(c=\operatorname{Com}_{ck}(0;r)\), output public key `pk=c` and secret
-   key `sk=r`.
-3. **`RSign(pp,sk,M,L)`**: locate `ell` with `c_ell=Com(0;sk)`. Repeatedly
-   generate `r` first-message packages `CMT_i` by running Protocol 2 steps
-   1–7 in parallel, with the Section 6 repeated-protocol changes. Compute
-   \(x=(x_1,...,x_r)=H(ck,M,L,(CMT_1,...,CMT_r))\). For each `i`, finish
-   Protocol 2 steps 9–11 with challenge `x_i`. If any aborts, restart; when
-   all succeed return \(\sigma=(\{CMT_i\},x,\{RSP_i\})\). The paper notes
-   that `A`, `D`, and `E_0` can be omitted because they are determined by the
-   remaining transmitted data and verification conditions.
-4. **`RVerify(pp,M,L,sigma)`**: parse the signature; recompute the hash and
-   reject unless it equals `x`; run Protocol 2 verification for each
-   `(CMT_i,x_i,RSP_i)` (except its interactive challenge step); accept only if
-   every run accepts.
+The excerpt defines
 
-The hash binds the message, the ordered ring, and all first messages. Signature
-correctness follows from protocol completeness; anonymity is argued from its
-zero-knowledge property; unforgeability is proved for insider corruption in
-the random-oracle model under the stated assumptions. Functional tests do not
-establish those security claims.
+\[
+\mathrm{CMT}=(A,B,C,D,\{E_j\}_{j=0}^{k-1}),\qquad
+\mathrm{RSP}=(\{f_{j,i}\}_{j=0,i=1}^{k-1,\beta-1},z,z_b,z_c).
+\]
+
+It permits omitting `A`, `D`, and `E_0` from the transmitted signature because
+they are uniquely determined. It does not give their reconstruction equations
+or state whether the hash input uses the full or reduced encoding. Until that
+is specified, a future implementation should retain the full CMT in its
+in-memory transcript and must inject, rather than invent, its byte encoding.
+
+#### RSign function-by-function map
+
+| RSign operation | Existing API that applies | Required RSign-specific work |
+|---|---|---|
+| Validate `L=(c_0,...,c_{N-1})` and find `ell` with `c_ell=Com_ck(0;sk)` | `commitment::Com` and the existing `PublicKey`, `SecretKey`, `Protocol2PublicList`, and `Protocol2Witness` types | Require `N=beta^k`, the stated ring/dimensions, and a matching key opening. The excerpt does not specify how to choose `ell` if the same key occurs more than once in `L`. |
+| Generate all `r` first messages | `BeginProtocol2Proof` builds one `Protocol2FirstMessage` and opaque `Protocol2ProverState`; its auxiliary commitment is already injected through `Protocol2AuxiliaryCommitmentProvider` | Add a repeated-run coordinator and check every Section 6 distribution before reusing this single-run begin function. It currently samples each run using Protocol 2's single-run widths. |
+| Hash `(ck,M,L,(CMT_1,...,CMT_r))` | `PublicParameters::hash_to_challenges` uses the injected `HashToChallenges` and checks output length and membership in `C` | The existing interface accepts bytes, not these typed transcript fields. An injected transcript encoder is still required; no concrete hash, encoding, or domain separation is selected here. |
+| Form each response | `ComputeProtocol2IntegerLiftResponses` computes one run's `z,z_b,z_c` lifts; `RespondProtocol2Proof` forms `f_nonzero` and the response | A batched response path must retain all integer lifts and skip the current per-run rejection calls. `RespondProtocol2Proof` performs those local calls and cannot produce Section 6's joint decision as-is. |
+| Reject or return | `AcceptProtocol2JointResponse` implements one run's joint response rejection; Protocol 2's first rejection is currently private to `protocol2_proof.cpp` | Add a batch-capable rejection path for both concatenations below. Do not call either rejection independently for each repetition. |
+
+`RSetup` associates the hash provider and stores its output count as
+`hash_output_count`; for RSign this count must equal the paper's repetition
+count `r`. `RKeygen` already uses the bounded sampler for `S_B^m`. The
+Protocol 2 first-message and response structs contain an auxiliary commitment
+and opening, respectively, whereas the excerpt's CMT and RSP definitions omit
+them. Protocol 2 verification needs these `aCom` values. Their exact placement
+in the Section 6 hash and signature encoding is therefore unresolved; keep the
+provider injected and do not silently drop the fields.
+
+#### Repeated rejection vectors and dimensions
+
+For run \(t\in\{1,\ldots,r\}\), reuse Protocol 2's first rejection center
+\(x_t b_{j,i}\) for \(j=0,\ldots,k-1,\ i=1,\ldots,\beta-1\). The batch input
+is run-major:
+
+\[
+F=(f^1_{0,1},\ldots,f^1_{k-1,\beta-1},
+   f^2_{0,1},\ldots,f^r_{k-1,\beta-1}),
+\quad
+C_F=(x_1b^1_{0,1},\ldots,x_rb^r_{k-1,\beta-1}),
+\]
+
+where each polynomial is flattened coefficient-minor after the existing
+row-major `(j,i)` ordering. The response has
+`r*k*(beta-1)*d` scalar coordinates. Concatenating the per-run Protocol 2
+first-stage centers gives \(K_1^2=kr\); the excerpt names the concatenated
+response vector but does not print this first-stage `K` explicitly.
+
+The second batch is exactly the run-major block order shown in the excerpt:
+
+\[
+Z=(z^1,z_b^1,z_c^1,\ldots,z^r,z_b^r,z_c^r),
+\quad
+C_Z=(x_1^k r,x_1r_b,x_1r_c,\ldots,x_r^k r,x_rr_b,x_rr_c).
+\]
+
+Each block is an integer lift of `m` ring polynomials, flattened
+vector-major/coefficient-minor, so the batch has `3*r*m*d` scalar
+coordinates. The inherited per-run center bound gives
+\(K_2^2=3B^2mdr\). Apply Algorithm 1 to `(F,C_F)` and then to `(Z,C_Z)` as
+global batch decisions, using the corresponding `phi1` and `phi2`. A failed
+batch decision aborts the whole repeated attempt. The current rejection API
+accepts three `m*d` response blocks and fixes \(K^2=3B^2md\); it needs a
+repetition-aware interface. The first-stage helper also needs to be exposed
+or generalized. All inner products must use the unreduced integer lifts.
+
+The within-run `f` ordering above follows the existing row-major
+`f_nonzero` API; the excerpt defines a set of `f_{j,i}` rather than a wire
+ordering. The run-major ordering of the response triples is explicit in the
+excerpt. Any serialized order must be fixed by the injected transcript
+encoder.
+
+#### Gaussian conventions and Section 6 audit
+
+**Facts established by the paper definitions and supplied Section 6 excerpt.**
+Section 2.3 defines \(D_s\) with scalar mass proportional to
+\(\exp(-\pi x^2/s^2)\), and defines the discrete normal \(D_\sigma\) with
+standard deviation \(\sigma\), mass proportional to
+\(\exp(-x^2/(2\sigma^2))\). They describe the same law exactly when
+\(s=\sigma\sqrt{2\pi}\). Thus \(s\) is neither the standard deviation nor its
+square. The authoritative Section 6 clarification identifies its displayed
+distributions as \(D_s\) and gives the scales
+\(12d\sqrt{kr}\) for its `f` distribution and
+\(12B\sqrt{3mdr}\) for its response distribution.
+
+**Facts established by code and sampler documentation.**
+`sampler.hpp`/`sampler.cpp` implement uniform and bounded coefficient,
+polynomial, vector, and matrix sampling; they do not implement a Gaussian.
+The Gaussian interface is `DiscreteGaussianProvider` in
+`binary_proof.hpp`: its inputs are positive exact-rational
+`sigma_squared` numerator/denominator, meaning variance \(\sigma^2\), and its
+target scalar mass is proportional to
+\(\exp(-x^2/(2\,\texttt{sigma\_squared}))\). The implemented
+`ExactDiscreteGaussianProvider` uses a two-sided geometric proposal and exact
+rational Bernoulli-exponential decisions to sample that \(D_\sigma\) law,
+conditional on the Bernoulli-exponential implementation and the independent
+unbiased-bit model being correct. It has no \(D_s\) input mode. See the
+[discrete-Gaussian sampler specification](./DISCRETE_GAUSSIAN_SAMPLER_SPEC.md).
+
+Current Protocol 2 call sites sample nonzero `a_{j,i}` with
+`sigma_squared=phi1^2*k`, `r_a,r_d` with
+`phi2^2*B^2*3*m*d`, and each `rho_j` with
+`phi2^2*B^2*3*m*d/k`. The response lifts are formed from these draws and
+rejected per run. These code facts describe the current single-run path; they
+do not establish the Section 6 repeated distributions.
+
+**Mathematical conversions.** Converting the stated \(D_s\) scales to the
+provider's \(D_\sigma\) variance convention gives
+\[
+\sigma_f^2=\frac{(12d\sqrt{kr})^2}{2\pi}
+           =\frac{72d^2kr}{\pi},\qquad
+\sigma_z^2=\frac{(12B\sqrt{3mdr})^2}{2\pi}
+           =\frac{216B^2mdr}{\pi}.
+\]
+The corresponding standard deviations are \(12d\sqrt{kr/(2\pi)}\) and
+\(12B\sqrt{3mdr/(2\pi)}\). These variance values are irrational for positive
+integer parameters because of \(\pi\), so they cannot be supplied exactly to
+the current rational `sigma_squared` interface. Rounding them would change
+the target distribution.
+
+**Distributional conclusion and unresolved source detail.** The current
+Gaussian algorithm samples the specified \(D_\sigma\) law for a supplied
+rational variance; it cannot represent either required Section 6 \(D_s\)
+distribution exactly through its present interface. The applicable
+pre-challenge versus response sampling steps are also not fully given here.
+The excerpt states distributions for `f` and
+`(z,z_b,z_c)`, but does not give enough of the repeated pre-challenge
+sampling/rejection construction here to derive all raw `a`, `r_a`, `r_d`, or
+`rho_j` provider calls from those response targets. An earlier statement in
+`SAMPLER_PARAMETER_RESOLUTION.md` giving
+\(D_{\phi_1\sqrt{kr}}\) and \(D_{\phi_2B\sqrt{3mdr}}\) as Section 6 widths
+is superseded by this clarification and is corrected in that document. The
+single-run Protocol 2 widths remain separate.
+
+#### Batch dimensions, integer lifts, and rejection
+
+**Facts established by the excerpt.** The first rejection is one decision on
+the concatenation of all \(r\) runs' `f_{j,i}` vectors; the response rejection
+is one decision on the run-major concatenation
+\((z^1,z_b^1,z_c^1,\ldots,z^r,z_b^r,z_c^r)\). With \(d\) coefficients per
+polynomial, their dimensions are respectively
+\(r k(\beta-1)d\) and \(3rmd\) integer coordinates.
+
+Section 6 divides each run at the challenge: execute Protocol 2 steps 1–7
+for all runs to obtain the first messages, hash the ordered batch to the
+challenge vector, then execute steps 9–11 for all runs. Collect the
+challenge-dependent `f` vectors and response lifts before applying the
+two global rejection decisions. A failed decision aborts the whole batch.
+The concatenated center bounds are \(K_1^2=kr\) and
+\(K_2^2=3B^2mdr\), rather than the single-run \(k\) and \(3B^2md\).
+
+The supplied Section 6 context also gives the extracted-randomness norm
+bound change from \(24\sqrt{3}Bmd\) to \(24\sqrt{3r}Bmd\). This is an
+extraction bound; it must not be confused with a per-run verifier response
+bound. No separate repeated per-run verifier norm bound is established by
+the supplied clarification.
+
+**Facts established by code.** `RespondProtocol2Proof` creates the first
+rejection input over integer lifts in row-major \((j,i)\), coefficient-minor
+order, of dimension \(k(\beta-1)d\). Its local `rejection_accepts` helper
+checks response/center length equality but is private and is called once per
+run with \(K^2=k\); it does not implement Section 6's one global decision.
+`ComputeProtocol2IntegerLiftResponses` returns three unreduced integer
+vectors, each of length \(md\). `AcceptProtocol2JointResponse` checks that
+each of its six response/center blocks has exactly \(md\) entries and fixes
+\(K^2=3B^2md\). `RespondProtocol2Proof` applies that helper before converting
+the accepted lifts to ring residues. Thus the current path preserves lifts
+through rejection, but neither rejection helper accepts Section 6's
+repetition-sized input as-is.
+
+**Required future batch behavior.** A repeated implementation must assemble
+all first-stage `f` lifts and centers in run-major order and make one
+rejection decision with the repeated center bound \(K_1^2=kr\). It must
+compute each run's response lifts, concatenate the three blocks per run in
+the specified order, and make one response decision with
+\(K_2^2=3B^2mdr\). It must retain the unreduced lifts and defer ring-residue
+conversion until after the global decisions. It must not substitute \(r\)
+independent per-run rejection decisions: those have a different acceptance
+event and do not implement the specified joint rejection.
+
+#### Provider use across repetitions
+
+The scalar Gaussian provider can generate a product of independent
+coordinate draws by repeated calls, provided each call uses the exact same
+resolved target variance and the random-bit stream satisfies the independent
+unbiased-bit assumption. No vector Gaussian provider is mathematically
+required merely because there are \(r\) repetitions. However, the required
+Section 6 \(D_s\) variances \(72d^2kr/\pi\) and \(216B^2mdr/\pi\) are
+irrational and cannot be passed exactly to the current rational
+`D_sigma` provider. Exact \(D_s\) sampling is mathematically feasible without
+that conversion: use rational \(S=s^2\), a two-sided geometric proposal with
+\(\lambda=\exp(-\pi\,2a/S)\) for rational \(a>0\), and accept \(y\) with
+\(\exp(-\pi(|y|-a)^2/S)\). The proposal times acceptance is proportional to
+\(\exp(-\pi y^2/S)\). Both coins require certified \(\pi\)-aware interval
+sampling, which the current rational-log Bernoulli provider does not supply.
+The detailed proposal and API are recorded in
+`SAMPLER_PARAMETER_RESOLUTION.md`; this is a design, not an implementation or
+validated provider. Sequential scalar sampling also does not replace the
+single global rejection decisions above.
+
+#### Eventual code changes (not implemented)
+
+- Implement and review the proposed \(D_s\) provider taking rational
+  `s_squared` and a separate exact `exp(-pi*t)` coin provider, as detailed in
+  `SAMPLER_PARAMETER_RESOLUTION.md`. Prove the interval and termination
+  arguments and do not approximate \(\pi\).
+- Resolve the repeated pre-challenge sampling equations before deriving raw
+  `a`, `r_a`, `r_d`, or `rho_j` calls from the stated response distributions.
+- Refactor `BeginProtocol2Proof` so repeated first messages and their integer
+  lifts can be generated without making local rejection decisions. Expose or
+  generalize the first-stage rejection calculation for a full
+  \(r k(\beta-1)d\)-coordinate vector and \(K^2=kr\).
+- Generalize `Protocol2JointRejectionInput` and
+  `AcceptProtocol2JointResponse` to accept \(rmd\)-coordinate blocks, validate
+  dimensions and center norm against \(3B^2mdr\), and retain one
+  run-major joint decision.
+- Add an RSign coordinator that keeps all lifts until the global decisions
+  complete, then serializes residues; on either rejection it discards and
+  regenerates the entire batch.
+- Add tests for exact parameter mapping once resolved, batch dimensions/order,
+  single-decision behavior, lift preservation, and failure propagation.
+
+No code changes, tests, builds, or parameter selections were made for this
+audit.
+
+#### Restart, transcript, and challenge ordering
+
+Keep `pp`, `sk`, `M`, and `L` fixed across retries. If either global rejection
+fails, discard every run's CMT, prover state, hash output, challenge, and
+partial response. Restart at Step 1 and regenerate all Protocol 2 first-message
+randomness and auxiliary commitments for all `r` runs, then hash the new
+ordered CMT tuple and form new responses. Never retain successful runs or
+challenges from the aborted batch.
+
+The challenge vector has exactly `r` entries because `RSetup` records
+`hash_output_count`; preserve index order so CMT_i uses x_i and RSP_i. The hash
+input field order is exactly `(ck,M,L,(CMT_1,...,CMT_r))` in the excerpt.
+`HashToChallenges` only accepts a byte string, so serialization of the
+commitment key, message, ordered ring, CMT fields (including `aCom`), and any
+omitted fields remains an injected dependency. No Fiat–Shamir encoding or
+hash has been added.
+
+#### Assumption 1 and binding profile
+
+For a future RSign parameter profile, enforce the excerpt's exact checks:
+
+\[
+d\geq7,\qquad md\geq86,\qquad
+q>(10\phi_1d\sqrt{dkr(\beta-1)}+2)^2,\qquad N=\beta^k.
+\]
+
+The current generic parameter validation and Protocol 2 validation do not
+establish all of these repeated-signature conditions. If
+\(\phi_1=p/t\) with positive integers `p,t`, the strict q inequality can be
+checked without floating point by setting
+\(W=dkr(\beta-1)\), \(A=10pd\), and
+\(R=q t^2-A^2W-4t^2\), then requiring \(R>0\) and
+\(R^2>16A^2t^2W\). Dimensions and products must be checked before conversion
+to `NTL::ZZ`.
+
+The excerpt sets the commitment scheme to `T_1`-binding, with
+\[
+T_1=\sqrt{(2d+2)
+  (54\phi_1^4d^3k^3\beta(\beta-1)r^2
+   +12\phi_2^2B^2m^2d^2r)}.
+\]
+The current commitment parameters store a rational squared norm bound, but
+RSetup does not enforce this RSign binding profile. A future profile must
+encode and validate the paper's `T_1`-binding requirement; do not select a
+numeric profile here. The excerpt also states that the extracted-randomness
+relation `R'_1/N` becomes
+\(24\sqrt{3r}Bmd\,(k+1)d^k\). The notation `R'_1/N` and its precise role in
+the binding calculation are not defined by the excerpt, so that relation
+cannot yet be translated into an additional check.
+
+#### Information still required before RSign implementation
+
+- The exact repeated-run pre-challenge sampling changes, especially whether
+  and how `r_a`, `r_d`, and each `rho_j` scale with `r`.
+- The paper's `D` subscript convention and its mapping to the existing
+  `DiscreteGaussianProvider` variance parameter.
+- Whether the omitted `aCom` commitment/opening belong in CMT/RSP and in the
+  hash transcript, plus reconstruction equations if `A`, `D`, or `E_0` are
+  omitted.
+- A canonical transcript encoder for the ordered tuple `(ck,M,L,CMTs)`.
+- Clarification of the `R'_1/N` notation and the treatment of duplicate
+  matching public keys in `L`.
+
+The available P2 tests cover one-run equations and local rejection; they do not
+cover the RSign batch distributions, concatenated rejection decisions, or
+restart behavior. No RSign implementation or test is claimed here.
+
+For completeness only, Section 6 describes RVerify as hashing the same
+ordered tuple, comparing the resulting challenge vector, and verifying every
+Protocol 2 transcript except its interactive challenge step. RVerify remains
+outside this RSign design task.
 
 ## 4. Parameter configuration from Section 6.1 and Appendix D
 
@@ -483,11 +761,12 @@ Dilithium tests remain separate and must continue to pass.
    messages, challenge vector and responses, plus hash-to-`C^r` rejection or
    modulo-bias handling. Section 6 gives the mathematical hash input but not
    an interoperable byte format.
-7. Confirm every Gaussian parameterization (the paper defines `D_sigma` and
-   standard deviation conventions separately), vector dimensions in each
-   sampler, and exact `Rej` input sign convention from the displayed
-   algorithms before implementation. No generic Gaussian or sampler is a
-   drop-in replacement.
+7. Implement and independently validate the Section 6 `D_s` distributions.
+   The exact conversion to `sigma_squared` is `72*d^2*k*r/pi` and
+   `216*B^2*m*d*r/pi`; the existing rational `D_sigma` provider cannot accept
+   these exactly. Also resolve the raw repeated pre-challenge draws, vector
+   dimensions, and exact `Rej` input sign convention before implementation.
+   No generic Gaussian or sampler is a drop-in replacement.
 8. Decide how exact norm checks will handle centered representatives and
    wraparound. The paper's bounds are on integer coefficient vectors, not
    arbitrary modular representatives.
@@ -593,16 +872,17 @@ separate from computational security under M-SIS/M-LWE.
   `G=[I_n | G'_r | G_m]`. Here the shapes are `5x8`, `5x16`, and `5x29`.
 - A key/opening randomness is `r <- S_B^m`, i.e. 13 ring polynomials / 3328
   coefficients uniform in `{-1,0,1}`. `Com_ck(u;r)=G(r,u)`.
-- The repeated Section 6 protocol applies rejection sampling to concatenated
-  `r`-run response vectors. Its stated distributions include
-  `f_{j,i} <- D^d_{phi1 sqrt(k r)}` for `i != 0` and
-  `z,z_b,z_c <- D^{md}_{phi2 B sqrt(3mdr)}` (Section 6, p. 19). Substitution:
-  widths are `4*sqrt(32)` and `4*sqrt(3*13*256*16)`, respectively, under the
-  paper's `D_s` parameter notation. Protocol 2's internal `r_a,r_d` use
-  `D^{md}_{phi2 B sqrt(3md)}` because that subproof rejects a `3md`-dimensional
-  concatenation (Protocol 2, p. 17). The Gaussian definition/convention is in
-  Section 2.3, p. 7; do not reinterpret `s` as a standard deviation without
-  converting by the paper's `sqrt(2 pi)` convention.
+- The supplied Section 6 excerpt states the repeated-run response
+  distributions literally as `f_{j,i} <- D_{12d sqrt(k r)}` for `i != 0`
+  and `z,z_b,z_c <- D_{12B sqrt(3mdr)}`. Do not replace these with prior
+  project-note formulas involving `phi1` or `phi2`. These are `D_s` scales;
+  Section 2.3 gives `sigma_squared=s^2/(2*pi)`, yielding
+  `72*d^2*k*r/pi` and `216*B^2*m*d*r/pi`. The current exact Gaussian
+  provider accepts only rational `sigma_squared`, so it cannot implement
+  them exactly. The excerpt still does not specify all pre-challenge
+  repeated-run draws; see the RSign implementation map above. In the current
+  single-run Protocol 2, `r_a,r_d` use variance parameter
+  `phi2^2*B^2*3md`, while each `rho_j` uses `phi2^2*B^2*3md/k`.
 - The commitment hiding assumption is
   `M-LWE_{m-n,n,q,B}=M-LWE_{8,5,q,1}` (Section 2.2, Lemma 1, p. 7, and
   Section 6.1, p. 20). It is over degree-256 `R_q`, with 8 secret ring
@@ -615,62 +895,32 @@ separate from computational security under M-SIS/M-LWE.
 
 #### `T1`, `T'`, and `B_{d,k}`
 
-Section 6, p. 19 (repeated-protocol tweak) and Appendix E give
+The supplied Section 6 excerpt gives
 \[
-T_1=(2d+2)\sqrt{54\phi_1^4d^3k^3\beta(\beta-1)r^2
-                  +12\phi_2^2B^2m^2d^2r}.
+T_1=\sqrt{(2d+2)\left(
+54\phi_1^4d^3k^3\beta(\beta-1)r^2
++12\phi_2^2B^2m^2d^2r\right)}.
 \]
-Substitution:
-\[
-T_1=514\sqrt{54(4^4)(256^3)(2^3)(8)(7)(16^2)
-                  +12(4^2)(1^2)(13^2)(256^2)(16)}
-\approx83,829,948,035.0075.
-\]
-The exact binding threshold required is strict: the M-SIS shortest-vector
-estimate must be **greater than** `2*T1` (Section 6.1, Eq. (11), p. 20).
-Thus `2*T1 ≈ 167,659,896,070.0149`.
+The commitment is to be `T_1`-binding. This placement of `(2d+2)` inside the
+square root supersedes the earlier expression in this document. The previous
+numeric `T_1`/`2T_1` substitution and any downstream M-SIS conclusion using
+that old expression are stale and must be recomputed before use. The excerpt
+does not provide enough detail to validate a production binding profile.
 
-Theorem 3, p. 19 gives the generic witness threshold
-\[
-T'=\max\left\{T_1,
- \sqrt{\left(24\sqrt{3r}\,mB(k+1)d^{k+1}\right)^2+2^{2k}}\right\}.
-\]
-After substitution, the second term is
-`24*sqrt(3*16)*13*1*(2+1)*256^(2+1)`;
-numerically its dominant term is approximately `108,796,860,512.7112`, so
-the generic theorem threshold is
-\[
-T'_{generic}\approx108,796,860,512.7112.
-\]
-The added `2^{2k}=16` is negligible at the shown precision. This is a
-conservative calculation using Method 1's `d`-based extraction bound.
-
-Section 6.1, Eq. (11) instead uses Method 2's enumerated global bound
-`B_{d,k}` from Section 3, Lemma 10, p. 12. For `d=256,k=2`, Lemma 10 says
-\[
-B_{256,2}\leq d^{k-1/2}=256^{3/2}=4096,
-\quad B'_{256,2}:=\sqrt d B_{256,2}\leq d^k=65,536.
-\]
-The exact enumeration requires
-\((k-1)\binom{2d-1}{k}=\binom{511}{2}=130,305\) polynomial
-multiplications (Lemma 10); the paper says it computed the exact values for
-Table 3 rows but does not print the exact `B_{256,2}`. Table 2, p. 12 reports
-only rounded `log2(B'_{256,2})=15.21`, implying an approximate `B'` of
-`2^15.21 ≈ 37,902.36`; this is a rounded report, not an exact reproducible
-value.
-
-For an auditable conservative check, substitute `B'<=65,536` into Eq. (11)'s
-extraction term:
-\[
-2\cdot24\sqrt{3r}\,Bmd(k+1)B'
-\leq2\cdot24\sqrt{48}\cdot1\cdot13\cdot256\cdot3\cdot65,536
-\approx217,593,721,025.4225.
-\]
-This exceeds `2*T1`, so it is the conservative required SIS length. With the
-rounded Table 2 value instead, this term is about `125.8` billion and `2*T1`
-dominates; the conservative calculation avoids treating rounded `B'` as exact.
+The excerpt also states that the extracted-randomness relation `R'_1/N`
+becomes \(24\sqrt{3r}Bmd(k+1)d^k\). Its notation and relationship to the
+generic `T'` and M-SIS bounds recorded in older notes are not defined by the
+excerpt. Do not use the prior numeric `T'`, `2T_1`, or M-SIS candidate
+calculations below as validated for this supplied source until their equations
+are reconciled and recomputed.
 
 ### C. Modulus constraints and exact arithmetic candidates
+
+The repeated q-bound calculation below is still the supplied Assumption 1
+condition. The M-SIS candidate calculations in this section use the earlier
+`T_1` expression and are superseded by the corrected Section 6 excerpt above;
+do not use their stated `2*T_1` thresholds or candidate conclusions until
+recomputed from a reconciled binding equation.
 
 The original paper's Section 2.1 defines `q` as an **odd positive integer**.
 Section 6.1 explicitly notes that the construction does not need a special
@@ -1264,7 +1514,7 @@ Both rejection steps are part of the prover algorithm, not verifier checks:
 `Rej(f_1,x*b_1,phi1,sqrt(k))` and
 `Rej((z_b,z_c),x*(r,r_c),phi2,B_bound*sqrt(2*m*d))`. The paper defines
 `Rej` in Algorithm 1, Section 2.3: with `sigma=phi*K` and
-`mu(phi)=exp(1/phi+1/(2*phi^2))`, it accepts using the stated exponential
+`mu(phi)=exp(12/phi+1/(2*phi^2))`, it accepts using the stated exponential
 probability and a uniform real `u in [0,1)`. The theorem assumes
 `d>=7`, `m*d>=86`, and
 `q>(10*phi1*d*sqrt(k*d*(beta-1))+2)^2`; it gives 3-special soundness and

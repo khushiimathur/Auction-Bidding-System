@@ -194,19 +194,6 @@ std::vector<NTL::ZZ> concatenate(const std::vector<NTL::ZZ>& first,
     return result;
 }
 
-std::vector<NTL::ZZ> sample_gaussian_lift(
-    std::size_t count, const NTL::ZZ& sigma_squared_numerator,
-    const NTL::ZZ& sigma_squared_denominator, sampling::RandomSource& random,
-    DiscreteGaussianProvider& gaussian) {
-    std::vector<NTL::ZZ> result;
-    result.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) {
-        result.push_back(gaussian.sample_coefficient(
-            sigma_squared_numerator, sigma_squared_denominator, random));
-    }
-    return result;
-}
-
 bool rejection_accepts(const std::vector<NTL::ZZ>& z_values,
                        const std::vector<NTL::ZZ>& center,
                        const PositiveRational& phi,
@@ -227,7 +214,7 @@ bool rejection_accepts(const std::vector<NTL::ZZ>& z_values,
     const NTL::ZZ t = phi.denominator;
     const NTL::ZZ exponent_denominator = 2 * p * p * K_squared;
     const NTL::ZZ exponent_numerator =
-        -(2 * p * t + t * t) * K_squared +
+        -(24 * p * t + t * t) * K_squared +
         t * t * (-2 * inner_product + center_norm_squared);
     if (exponent_numerator >= 0) return true;
     return exponential.sample_exp(exponent_numerator, exponent_denominator, random);
@@ -306,24 +293,17 @@ bool verify_norms(const commitment::Parameters& p,
 
 }  // namespace
 
-void Protocol2Parameters::validate(const commitment::CommitmentKey& key) const {
-    const commitment::Parameters& p = key.parameters();
-    p.validate();
-    if (p.B <= 0) {
-        throw std::invalid_argument("Protocol 2 requires positive B");
-    }
-    BinaryProofParameters{k, beta, phi1, phi2}.validate(key);
-    (void)list_size(k, beta);
-}
-
-Protocol2ProofBeginResult BeginProtocol2Proof(
-    const commitment::CommitmentKey& key,
-    const Protocol2Parameters& proof,
-    const Protocol2PublicList& public_list,
-    const Protocol2Witness& witness,
-    sampling::RandomSource& random,
-    DiscreteGaussianProvider& gaussian,
-    Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+class Protocol2ProofBuilder {
+public:
+    template <typename SampleGaussian>
+    static Protocol2ProofBeginResult begin(
+        const commitment::CommitmentKey& key,
+        const Protocol2Parameters& proof,
+        const Protocol2PublicList& public_list,
+        const Protocol2Witness& witness,
+        sampling::RandomSource& random,
+        SampleGaussian&& sample_gaussian,
+        Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
     proof.validate(key);
     const commitment::Parameters& p = key.parameters();
     const std::size_t expected_list_size = list_size(proof.k, proof.beta);
@@ -367,17 +347,13 @@ Protocol2ProofBeginResult BeginProtocol2Proof(
     const PolynomialVector bits = from_lift(bits_lift, p.v, p);
 
     std::vector<NTL::ZZ> a_lift(checked_product(p.v, p.degree), NTL::ZZ(0));
-    const NTL::ZZ a_sigma_squared_numerator =
-        proof.phi1.numerator * proof.phi1.numerator * zz(proof.k);
-    const NTL::ZZ a_sigma_squared_denominator =
-        proof.phi1.denominator * proof.phi1.denominator;
     for (std::size_t row = 0; row < proof.k; ++row) {
         for (std::size_t digit = 1; digit < proof.beta; ++digit) {
             const std::size_t offset =
                 (row * proof.beta + digit) * p.degree;
             for (std::size_t coefficient = 0; coefficient < p.degree; ++coefficient) {
-                a_lift[offset + coefficient] = gaussian.sample_coefficient(
-                    a_sigma_squared_numerator, a_sigma_squared_denominator, random);
+                a_lift[offset + coefficient] =
+                    sample_gaussian(Protocol2GaussianSampleKind::binary_mask);
             }
         }
         for (std::size_t coefficient = 0; coefficient < p.degree; ++coefficient) {
@@ -396,15 +372,16 @@ Protocol2ProofBeginResult BeginProtocol2Proof(
         r_c_lift[i] = sampling::sample_bounded_coefficient(p.B, random);
     }
 
-    const NTL::ZZ phi2_numerator =
-        proof.phi2.numerator * proof.phi2.numerator * p.B * p.B *
-        3 * zz(p.m) * zz(p.degree);
-    const NTL::ZZ phi2_denominator =
-        proof.phi2.denominator * proof.phi2.denominator;
-    const std::vector<NTL::ZZ> r_a_lift = sample_gaussian_lift(
-        md, phi2_numerator, phi2_denominator, random, gaussian);
-    const std::vector<NTL::ZZ> r_d_lift = sample_gaussian_lift(
-        md, phi2_numerator, phi2_denominator, random, gaussian);
+    std::vector<NTL::ZZ> r_a_lift(md);
+    std::vector<NTL::ZZ> r_d_lift(md);
+    for (std::size_t i = 0; i < md; ++i) {
+        r_a_lift[i] =
+            sample_gaussian(Protocol2GaussianSampleKind::response_mask);
+    }
+    for (std::size_t i = 0; i < md; ++i) {
+        r_d_lift[i] =
+            sample_gaussian(Protocol2GaussianSampleKind::response_mask);
+    }
 
     const PolynomialVector a = from_lift(a_lift, p.v, p);
     const PolynomialVector r_b = from_lift(r_b_lift, p.m, p);
@@ -437,12 +414,10 @@ Protocol2ProofBeginResult BeginProtocol2Proof(
         proof.k, std::vector<NTL::ZZ>(md));
     std::vector<PolynomialVector> rho_vectors;
     rho_vectors.reserve(proof.k);
-    const NTL::ZZ rho_sigma_squared_denominator =
-        phi2_denominator * zz(proof.k);
     for (std::size_t j = 0; j < proof.k; ++j) {
-        rho_lifts[j] = sample_gaussian_lift(
-            md, phi2_numerator, rho_sigma_squared_denominator,
-            random, gaussian);
+        for (NTL::ZZ& coefficient : rho_lifts[j]) {
+            coefficient = sample_gaussian(Protocol2GaussianSampleKind::rho);
+        }
         rho_vectors.push_back(from_lift(rho_lifts[j], p.m, p));
     }
 
@@ -469,11 +444,234 @@ Protocol2ProofBeginResult BeginProtocol2Proof(
     state.a_lift_ = std::move(a_lift);
     state.r_b_lift_ = std::move(r_b_lift);
     state.r_c_lift_ = std::move(r_c_lift);
-    state.r_a_lift_ = r_a_lift;
-    state.r_d_lift_ = r_d_lift;
+    state.r_a_lift_ = std::move(r_a_lift);
+    state.r_d_lift_ = std::move(r_d_lift);
     state.rho_lifts_ = std::move(rho_lifts);
     state.auxiliary_opening_ = std::move(auxiliary.opening);
     return {std::move(first), std::move(state)};
+    }
+
+    static Protocol2FirstStageLiftResponse first_stage(
+        const Protocol2ProverState& state,
+        const commitment::CommitmentKey& key,
+        const Protocol2Parameters& proof,
+        const arithmetic::Polynomial& challenge) {
+        proof.validate(key);
+        const commitment::Parameters& p = key.parameters();
+        if (challenge.degree() != p.degree || challenge.modulus() != p.q) {
+            throw std::invalid_argument("Protocol 2 challenge uses the wrong ring");
+        }
+        const SignedMonomial monomial = require_monomial(challenge);
+        const std::vector<NTL::ZZ> x_bits = multiply_by_monomial(
+            state.bits_lift_, monomial, p.v, p.degree);
+        const std::vector<NTL::ZZ> f_lift = add_lifts(state.a_lift_, x_bits);
+
+        Protocol2FirstStageLiftResponse result;
+        const std::size_t count =
+            checked_product(checked_product(proof.k, proof.beta - 1), p.degree);
+        result.f_nonzero_lift.reserve(count);
+        result.center_f_lift.reserve(count);
+        for (std::size_t row = 0; row < proof.k; ++row) {
+            for (std::size_t digit = 1; digit < proof.beta; ++digit) {
+                const std::size_t offset =
+                    (row * proof.beta + digit) * p.degree;
+                for (std::size_t coefficient = 0; coefficient < p.degree;
+                     ++coefficient) {
+                    result.f_nonzero_lift.push_back(
+                        f_lift[offset + coefficient]);
+                    result.center_f_lift.push_back(
+                        x_bits[offset + coefficient]);
+                }
+            }
+        }
+        return result;
+    }
+
+    static Protocol2ResponseLiftData response_lifts(
+        const Protocol2ProverState& state,
+        const commitment::CommitmentKey& key,
+        const Protocol2Parameters& proof,
+        const arithmetic::Polynomial& challenge) {
+        proof.validate(key);
+        const commitment::Parameters& p = key.parameters();
+        if (challenge.degree() != p.degree || challenge.modulus() != p.q) {
+            throw std::invalid_argument("Protocol 2 challenge uses the wrong ring");
+        }
+        const SignedMonomial monomial = require_monomial(challenge);
+        Protocol2ResponseLiftData result;
+        result.responses = ComputeProtocol2IntegerLiftResponses(
+            challenge, proof.k, state.witness_randomness_lift_,
+            state.rho_lifts_, state.r_b_lift_, state.r_a_lift_,
+            state.r_c_lift_, state.r_d_lift_);
+
+        SignedMonomial challenge_power{0, false};
+        for (std::size_t i = 0; i < proof.k; ++i) {
+            challenge_power =
+                multiply_monomials(challenge_power, monomial, p.degree);
+        }
+        result.center_z_lift = multiply_by_monomial(
+            state.witness_randomness_lift_, challenge_power, p.m, p.degree);
+        result.center_z_b_lift = multiply_by_monomial(
+            state.r_b_lift_, monomial, p.m, p.degree);
+        result.center_z_c_lift = multiply_by_monomial(
+            state.r_c_lift_, monomial, p.m, p.degree);
+        result.auxiliary_opening = state.auxiliary_opening_;
+        return result;
+    }
+};
+
+void Protocol2Parameters::validate(const commitment::CommitmentKey& key) const {
+    const commitment::Parameters& p = key.parameters();
+    p.validate();
+    if (p.B <= 0) {
+        throw std::invalid_argument("Protocol 2 requires positive B");
+    }
+    BinaryProofParameters{k, beta, phi1, phi2}.validate(key);
+    (void)list_size(k, beta);
+}
+
+DsProtocol2RSignGaussianProvider::DsProtocol2RSignGaussianProvider(
+    DiscreteGaussianSProvider& sampler,
+    const Protocol2RSignGaussianScaleProfile& scale_profile)
+    : sampler_(sampler), scale_profile_(scale_profile) {}
+
+bool DsProtocol2RSignGaussianProvider::supports_section6_distributions()
+    const noexcept {
+    return scale_profile_.supports_section6_distributions();
+}
+
+NTL::ZZ DsProtocol2RSignGaussianProvider::sample_coefficient(
+    Protocol2GaussianSampleKind kind,
+    std::size_t run_index,
+    std::size_t repetitions,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& parameters,
+    sampling::RandomSource& random) {
+    if (repetitions == 0 || run_index >= repetitions) {
+        throw std::invalid_argument("RSign Gaussian run index is invalid");
+    }
+    if (!supports_section6_distributions()) {
+        throw std::runtime_error(
+            "RSign Gaussian scale profile does not support Section 6");
+    }
+    const Protocol2GaussianScaleSquared scale =
+        scale_profile_.scale_squared(
+            kind, run_index, repetitions, key, parameters);
+    if (scale.numerator <= 0 || scale.denominator <= 0) {
+        throw std::invalid_argument(
+            "RSign Gaussian scale profile returned a non-positive rational");
+    }
+    return sampler_.sample_coefficient_from_scale_squared(
+        scale.numerator, scale.denominator, random);
+}
+
+Protocol2ProofBeginResult BeginProtocol2Proof(
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& proof,
+    const Protocol2PublicList& public_list,
+    const Protocol2Witness& witness,
+    sampling::RandomSource& random,
+    DiscreteGaussianProvider& gaussian,
+    Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+    proof.validate(key);
+    const commitment::Parameters& p = key.parameters();
+    const NTL::ZZ phi1_num = proof.phi1.numerator * proof.phi1.numerator *
+                             zz(proof.k);
+    const NTL::ZZ phi1_den =
+        proof.phi1.denominator * proof.phi1.denominator;
+    const NTL::ZZ phi2_num =
+        proof.phi2.numerator * proof.phi2.numerator * p.B * p.B *
+        3 * zz(p.m) * zz(p.degree);
+    const NTL::ZZ phi2_den =
+        proof.phi2.denominator * proof.phi2.denominator;
+    return Protocol2ProofBuilder::begin(
+        key, proof, public_list, witness, random,
+        [&](Protocol2GaussianSampleKind kind) {
+            if (kind == Protocol2GaussianSampleKind::binary_mask) {
+                return gaussian.sample_coefficient(phi1_num, phi1_den, random);
+            }
+            if (kind == Protocol2GaussianSampleKind::rho) {
+                return gaussian.sample_coefficient(
+                    phi2_num, phi2_den * zz(proof.k), random);
+            }
+            return gaussian.sample_coefficient(phi2_num, phi2_den, random);
+        },
+        auxiliary_commitment);
+}
+
+Protocol2ProofBeginResult BeginProtocol2ProofForRSign(
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& proof,
+    const Protocol2PublicList& public_list,
+    const Protocol2Witness& witness,
+    std::size_t run_index,
+    std::size_t repetitions,
+    sampling::RandomSource& random,
+    Protocol2RSignGaussianProvider& gaussian,
+    Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+    if (repetitions == 0 || run_index >= repetitions) {
+        throw std::invalid_argument("RSign run index or repetition count is invalid");
+    }
+    if (!gaussian.supports_section6_distributions()) {
+        throw std::runtime_error(
+            "RSign Gaussian provider does not support the Section 6 distributions");
+    }
+    return Protocol2ProofBuilder::begin(
+        key, proof, public_list, witness, random,
+        [&](Protocol2GaussianSampleKind kind) {
+            return gaussian.sample_coefficient(
+                kind, run_index, repetitions, key, proof, random);
+        },
+        auxiliary_commitment);
+}
+
+Protocol2FirstStageLiftResponse ComputeProtocol2FirstStageLiftResponse(
+    const Protocol2ProverState& state,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& proof,
+    const arithmetic::Polynomial& challenge) {
+    if (state.consumed_) {
+        throw std::logic_error("Protocol 2 prover state has already been consumed");
+    }
+    return Protocol2ProofBuilder::first_stage(state, key, proof, challenge);
+}
+
+Protocol2ResponseLiftData ComputeProtocol2ResponseLiftData(
+    Protocol2ProverState& state,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& proof,
+    const arithmetic::Polynomial& challenge) {
+    if (state.consumed_) {
+        throw std::logic_error("Protocol 2 prover state has already been consumed");
+    }
+    state.consumed_ = true;
+    return Protocol2ProofBuilder::response_lifts(state, key, proof, challenge);
+}
+
+Protocol2Response EncodeProtocol2Response(
+    const Protocol2FirstStageLiftResponse& first_stage,
+    Protocol2ResponseLiftData&& response_lifts,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& proof) {
+    proof.validate(key);
+    const commitment::Parameters& p = key.parameters();
+    const std::size_t f_count = checked_product(proof.k, proof.beta - 1);
+    const std::size_t f_dimension = checked_product(f_count, p.degree);
+    const std::size_t response_dimension = checked_product(p.m, p.degree);
+    if (first_stage.f_nonzero_lift.size() != f_dimension ||
+        response_lifts.responses.z_lift.size() != response_dimension ||
+        response_lifts.responses.z_b_lift.size() != response_dimension ||
+        response_lifts.responses.z_c_lift.size() != response_dimension) {
+        throw std::invalid_argument("Protocol 2 response lifts have incompatible dimensions");
+    }
+
+    Protocol2Response response;
+    response.f_nonzero = from_lift(first_stage.f_nonzero_lift, f_count, p);
+    response.auxiliary_opening = std::move(response_lifts.auxiliary_opening);
+    response.z = from_lift(response_lifts.responses.z_lift, p.m, p);
+    response.z_b = from_lift(response_lifts.responses.z_b_lift, p.m, p);
+    response.z_c = from_lift(response_lifts.responses.z_c_lift, p.m, p);
+    return response;
 }
 
 std::optional<Protocol2Response> RespondProtocol2Proof(
@@ -489,65 +687,29 @@ std::optional<Protocol2Response> RespondProtocol2Proof(
     state.consumed_ = true;
     proof.validate(key);
     const commitment::Parameters& p = key.parameters();
-    if (challenge.degree() != p.degree || challenge.modulus() != p.q) {
-        throw std::invalid_argument("Protocol 2 challenge uses the wrong ring");
-    }
-    const SignedMonomial monomial = require_monomial(challenge);
-
-    const std::vector<NTL::ZZ> x_bits = multiply_by_monomial(
-        state.bits_lift_, monomial, p.v, p.degree);
-    std::vector<NTL::ZZ> f_lift = add_lifts(state.a_lift_, x_bits);
-    std::vector<NTL::ZZ> f_nonzero_lift;
-    std::vector<NTL::ZZ> x_b_nonzero;
-    f_nonzero_lift.reserve(checked_product(
-        checked_product(proof.k, proof.beta - 1), p.degree));
-    x_b_nonzero.reserve(f_nonzero_lift.capacity());
-    for (std::size_t row = 0; row < proof.k; ++row) {
-        for (std::size_t digit = 1; digit < proof.beta; ++digit) {
-            const std::size_t offset =
-                (row * proof.beta + digit) * p.degree;
-            for (std::size_t coefficient = 0; coefficient < p.degree; ++coefficient) {
-                f_nonzero_lift.push_back(f_lift[offset + coefficient]);
-                x_b_nonzero.push_back(x_bits[offset + coefficient]);
-            }
-        }
-    }
-    if (!rejection_accepts(f_nonzero_lift, x_b_nonzero, proof.phi1,
+    const Protocol2FirstStageLiftResponse first_stage =
+            Protocol2ProofBuilder::first_stage(state, key, proof, challenge);
+    if (!rejection_accepts(first_stage.f_nonzero_lift,
+                              first_stage.center_f_lift, proof.phi1,
                           zz(proof.k), random, exponential)) {
         return std::nullopt;
     }
 
-    const Protocol2IntegerLiftResponses lift_responses =
-        ComputeProtocol2IntegerLiftResponses(
-            challenge, proof.k, state.witness_randomness_lift_,
-            state.rho_lifts_, state.r_b_lift_, state.r_a_lift_,
-            state.r_c_lift_, state.r_d_lift_);
-    SignedMonomial challenge_power{0, false};
-    for (std::size_t i = 0; i < proof.k; ++i) {
-        challenge_power = multiply_monomials(challenge_power, monomial, p.degree);
-    }
-    const std::vector<NTL::ZZ> center_z = multiply_by_monomial(
-        state.witness_randomness_lift_, challenge_power, p.m, p.degree);
-    const std::vector<NTL::ZZ> center_z_b = multiply_by_monomial(
-        state.r_b_lift_, monomial, p.m, p.degree);
-    const std::vector<NTL::ZZ> center_z_c = multiply_by_monomial(
-        state.r_c_lift_, monomial, p.m, p.degree);
+    Protocol2ResponseLiftData response_lifts =
+            Protocol2ProofBuilder::response_lifts(state, key, proof, challenge);
     const Protocol2JointRejectionInput rejection_input{
-        lift_responses.z_lift, lift_responses.z_b_lift, lift_responses.z_c_lift,
-        center_z, center_z_b, center_z_c};
+            response_lifts.responses.z_lift,
+            response_lifts.responses.z_b_lift,
+            response_lifts.responses.z_c_lift,
+            response_lifts.center_z_lift,
+            response_lifts.center_z_b_lift,
+            response_lifts.center_z_c_lift};
     if (!AcceptProtocol2JointResponse(
             key, proof.phi2, rejection_input, random, exponential)) {
         return std::nullopt;
     }
-
-    Protocol2Response response;
-    response.f_nonzero = from_lift(
-        f_nonzero_lift, checked_product(proof.k, proof.beta - 1), p);
-    response.auxiliary_opening = state.auxiliary_opening_;
-    response.z = from_lift(lift_responses.z_lift, p.m, p);
-    response.z_b = from_lift(lift_responses.z_b_lift, p.m, p);
-    response.z_c = from_lift(lift_responses.z_c_lift, p.m, p);
-    return response;
+    return EncodeProtocol2Response(first_stage, std::move(response_lifts),
+                                       key, proof);
 }
 
 bool VerifyProtocol2Proof(

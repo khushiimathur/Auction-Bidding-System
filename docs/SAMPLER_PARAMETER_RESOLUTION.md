@@ -29,10 +29,11 @@ exp(-pi*x^2/s^2) = exp(-x^2/(2*sigma^2)).
 
 This is the exact conversion. `D_s`’s parameter is not the standard deviation.
 Both distributions have support over all of `Z`; vector coordinates in the
-spherical case are independent. The protocol algorithms use the paper’s
-`D_sigma` notation: Algorithm 1 and Lemma 6 use `D_sigma`, and the protocol
-widths are given with that notation. Lemma 4 on p. 7 also states tail and norm
-bounds in terms of standard deviation `sigma`.
+spherical case are independent. Protocols 1 and 2 use the paper’s `D_sigma`
+widths, and Algorithm 1 and Lemma 6 use that notation. Section 6's repeated
+construction instead specifies the `D_s` distributions recorded below.
+Lemma 4 on p. 7 also states tail and norm bounds in terms of standard
+deviation `sigma`.
 
 ## 2. Trace from paper to code
 
@@ -113,17 +114,136 @@ discrete Gaussian.
 
 ### Section 6 repeated ring-signature variant
 
-Section 6, p. 19 explicitly describes rejection across concatenated
-repetitions and gives widths `D_{phi1 sqrt(kr)}` for the `f_{j,i}` draws and
-`D_{phi2 B sqrt(3mdr)}` for `z,z_b,z_c`. These are the widths for that repeated
-construction; its repetition count depends on the security/soundness target.
-No production parameters are selected here.
+Section 6, printed p. 19, applies the first rejection to the concatenated
+`f_{j,i}` vectors from all `r` runs and the response rejection to the
+concatenated `(z,z_b,z_c)` triples. The authoritative specification gives
+these distributions as
+
+```text
+f_{j,i} <- D_s,  s = 12*d*sqrt(k*r),                 i != 0
+z,z_b,z_c <- D_s, s = 12*B*sqrt(3*m*d*r).
+```
+
+By Section 2.3, `D_s` has scalar mass proportional to
+`exp(-pi*x^2/s^2)`. Converting to the provider's `D_sigma` convention gives
+
+```text
+sigma_f^2 = s_f^2/(2*pi) = 72*d^2*k*r/pi
+sigma_z^2 = s_z^2/(2*pi) = 216*B^2*m*d*r/pi.
+```
+
+These values are irrational and cannot be passed to the current
+`DiscreteGaussianProvider`, which accepts only positive rational
+`sigma_squared`. Do not round them or substitute `D_sigma` widths involving
+`phi1` or `phi2`. Earlier statements in this document giving
+`D_{phi1*sqrt(k*r)}` and `D_{phi2*B*sqrt(3*m*d*r)}` for Section 6 are
+superseded; those are not the specified Section 6 distributions. The
+pre-challenge sampling changes needed to realize the stated response
+distributions are not specified here. No production parameters are selected.
+
+The two global rejection inputs have dimensions `r*k*(beta-1)*d` for
+concatenated `f` and `3*r*m*d` for run-major `(z,z_b,z_c)` triples. Their
+center norm-square bounds are `k*r` and `3*B^2*m*d*r`. These are one decision
+per concatenated vector, not independent per-run decisions. If either
+decision rejects, discard all runs' states, first messages, commitments,
+challenges and responses; regenerate the full batch while keeping the
+message, ring, key and public parameters fixed. See
+[`REJECTION_SAMPLING_CORRECTNESS_AUDIT.md`](./REJECTION_SAMPLING_CORRECTNESS_AUDIT.md)
+for the helper dimension requirements.
+
+#### Exact \(D_s\) sampler feasibility and proposed API
+
+The current `ExactDiscreteGaussianProvider` cannot accept the Section 6 laws
+exactly: it takes rational `sigma_squared` and its proposal rate and
+acceptance log are rational. However, the existing rejection-sampler
+structure can be adapted directly to \(D_s\) without forming the irrational
+\(\sigma^2=s^2/(2\pi)\).
+
+Let \(S=s^2\in\mathbb Q_{>0}\), and choose any rational proposal center
+\(a>0\). Set
+
+```text
+tau = 2*pi*a/S
+lambda = exp(-tau) = exp(-pi*(2*a/S)).
+```
+
+Generate two independent geometric variables with
+`Pr[G=n]=(1-lambda)*lambda^n`, for `n>=0`, by repeated exact Bernoulli
+`lambda` trials, and set `Y=G_1-G_2`. Its proposal mass is
+
+```text
+q(y) = ((1-lambda)/(1+lambda))*lambda^abs(y).
+```
+
+Accept `Y=y` with probability
+
+```text
+A(y) = exp(-pi*(abs(y)-a)^2/S).
+```
+
+Since `tau=2*pi*a/S`,
+
+```text
+q(y)*A(y)
+  is proportional to exp(-tau*abs(y) - pi*(abs(y)-a)^2/S)
+  = exp(-pi*(y^2+a^2)/S)
+  is proportional to exp(-pi*y^2/S).
+```
+
+Thus, conditional on exact Bernoulli decisions, the accepted output has
+exactly the scalar \(D_s\) mass. Both coin parameters have the form
+`exp(-pi*t)` for a positive rational `t`: `t=2*a/S` for the geometric
+proposal and `t=(abs(y)-a)^2/S` for acceptance. Any positive rational `a`
+preserves the target; choosing it near the target's typical scale affects
+efficiency only and must not approximate or alter the target law.
+
+The Section 6 API can accept the exact rational square of the paper's scale,
+not an irrational floating-point `s`. A proposed separate
+`DiscreteGaussianSProvider`/`ExactDiscreteGaussianSProvider` interface is:
+
+```cpp
+sample_coefficient_from_scale_squared(
+    const NTL::ZZ& s_squared_numerator,
+    const NTL::ZZ& s_squared_denominator,
+    sampling::RandomSource& random);
+```
+
+For the specified scales, the inputs are exactly
+`S_f=144*d^2*k*r` and `S_z=432*B^2*m*d*r`. The API semantics must explicitly be \(D_s\), distinct from the existing
+\(D_\sigma\) interface.
+
+The existing Bernoulli-exponential provider accepts only `exp(-x)` for
+rational `x`; it cannot directly sample `exp(-pi*t)`. A clean extension is a
+separate exact `BernoulliPiExponentialProvider` with a
+`sample_exp_neg_pi_rational(t_numerator,t_denominator,random)` operation,
+shared internally with the current interval-refinement machinery. To decide
+this coin exactly, refine certified rational lower/upper bounds for \(\pi\)
+(for example, from a convergent arctangent series), propagate them through
+the monotone exponential, and compare the resulting probability interval
+with a dyadic uniform interval generated from unbiased bits. Rational
+exponential endpoints can use range reduction and alternating Taylor bounds.
+Refine both intervals until they separate. Under independent unbiased bits,
+the uniform threshold equals the fixed probability with probability zero, so
+the comparison terminates almost surely. This is a feasibility argument and
+design proposal, not an implemented or reviewed proof of a new provider.
+
+The geometric proposal is also exactly sampleable by this \(\pi\)-aware
+provider: its per-trial success probability is `exp(-pi*(2*a/S))`. Both
+geometric loops terminate almost surely because `0<lambda<1`; the outer
+rejection loop does too because every integer has positive target and
+acceptance mass. Neither has a finite worst-case runtime. Adaptive precision,
+unbounded loops, and sample-dependent execution are variable-time; no
+constant-time or resource-bound claim follows. A finite precision cutoff or
+floating-point approximation changes the law unless separately bounded and
+approved. Exact-law claims additionally assume correct certified interval
+arithmetic and ideal independent unbiased bits; deployment entropy is a
+computational assumption and requires separate review.
 
 ## 3. Rejection and Bernoulli-exponential requirements
 
 Algorithm 1, §2.3, p. 8 takes a vector `z`, a center `c` with `||c||<K`,
 `phi>0`, and sets `sigma=phi*K` and
-`mu(phi)=exp(1/phi+1/(2phi²))`. It draws `u` uniformly in `[0,1)` and accepts
+`mu(phi)=exp(12/phi+1/(2phi²))`. It draws `u` uniformly in `[0,1)` and accepts
 unless
 
 ```text
@@ -135,7 +255,7 @@ threshold. With the project’s rational `phi` and integer `K²`, the log of thi
 probability is rational:
 
 ```text
--1/phi - 1/(2*phi^2)
+-12/phi - 1/(2*phi^2)
   + (-2*<z,c> + ||c||^2)/(2*phi^2*K^2).
 ```
 

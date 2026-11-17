@@ -78,7 +78,7 @@ bool AcceptProtocol2JointResponse(
     const NTL::ZZ t = phi2.denominator;
     const NTL::ZZ exponent_denominator = 2 * p * p * K_squared;
     const NTL::ZZ exponent_numerator =
-        -(2 * p * t + t * t) * K_squared +
+        -(24 * p * t + t * t) * K_squared +
         t * t * (-2 * inner_product + center_norm_squared);
     if (exponent_numerator >= 0) {
         return true;

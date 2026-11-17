@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lattice_lrs/proofs/protocol2_commitment.hpp"
+#include "lattice_lrs/proofs/discrete_gaussian_s.hpp"
 #include "lattice_lrs/proofs/protocol2_rejection.hpp"
 #include "lattice_lrs/proofs/protocol2_response_lift.hpp"
 
@@ -26,6 +27,84 @@ struct Protocol2Witness {
 };
 
 using Protocol2PublicList = std::vector<sampling::PolynomialVector>;
+
+enum class Protocol2GaussianSampleKind {
+    binary_mask,
+    response_mask,
+    rho,
+};
+
+// Section 6's raw Gaussian widths are not fully resolved by the available
+// specification. Implementations must opt in only when they implement the
+// required repeated-run D_s law; tests may use explicitly non-cryptographic
+// deterministic providers.
+class Protocol2RSignGaussianProvider {
+public:
+    virtual ~Protocol2RSignGaussianProvider() = default;
+    virtual bool supports_section6_distributions() const noexcept = 0;
+    virtual NTL::ZZ sample_coefficient(
+        Protocol2GaussianSampleKind kind,
+        std::size_t run_index,
+        std::size_t repetitions,
+        const commitment::CommitmentKey& key,
+        const Protocol2Parameters& parameters,
+        sampling::RandomSource& random) = 0;
+};
+
+struct Protocol2GaussianScaleSquared {
+    NTL::ZZ numerator;
+    NTL::ZZ denominator;
+};
+
+class Protocol2RSignGaussianScaleProfile {
+public:
+    virtual ~Protocol2RSignGaussianScaleProfile() = default;
+    virtual bool supports_section6_distributions() const noexcept = 0;
+    virtual Protocol2GaussianScaleSquared scale_squared(
+        Protocol2GaussianSampleKind kind,
+        std::size_t run_index,
+        std::size_t repetitions,
+        const commitment::CommitmentKey& key,
+        const Protocol2Parameters& parameters) const = 0;
+};
+
+// Bridges a resolved rational D_s scale profile to the existing exact D_s
+// sampler. No profile is supplied because the Section 6 raw scale mapping
+// remains unresolved.
+class DsProtocol2RSignGaussianProvider final
+    : public Protocol2RSignGaussianProvider {
+public:
+    DsProtocol2RSignGaussianProvider(
+        DiscreteGaussianSProvider& sampler,
+        const Protocol2RSignGaussianScaleProfile& scale_profile);
+
+    bool supports_section6_distributions() const noexcept override;
+    NTL::ZZ sample_coefficient(
+        Protocol2GaussianSampleKind kind,
+        std::size_t run_index,
+        std::size_t repetitions,
+        const commitment::CommitmentKey& key,
+        const Protocol2Parameters& parameters,
+        sampling::RandomSource& random) override;
+
+private:
+    DiscreteGaussianSProvider& sampler_;
+    const Protocol2RSignGaussianScaleProfile& scale_profile_;
+};
+
+struct Protocol2FirstStageLiftResponse {
+    // Both vectors are flattened (j,i)-major, coefficient-minor.
+    std::vector<NTL::ZZ> f_nonzero_lift;
+    std::vector<NTL::ZZ> center_f_lift;
+};
+
+struct Protocol2ResponseLiftData {
+    Protocol2IntegerLiftResponses responses;
+    std::vector<NTL::ZZ> center_z_lift;
+    std::vector<NTL::ZZ> center_z_b_lift;
+    std::vector<NTL::ZZ> center_z_c_lift;
+    std::vector<std::uint8_t> auxiliary_opening;
+};
 
 class Protocol2AuxiliaryCommitmentProvider {
 public:
@@ -66,6 +145,7 @@ struct Protocol2Response {
 };
 
 struct Protocol2ProofBeginResult;
+class Protocol2ProofBuilder;
 
 class Protocol2ProverState {
 public:
@@ -77,12 +157,26 @@ public:
 private:
     Protocol2ProverState() = default;
 
+    friend class Protocol2ProofBuilder;
     friend struct Protocol2ProofBeginResult;
     friend Protocol2ProofBeginResult BeginProtocol2Proof(
         const commitment::CommitmentKey&, const Protocol2Parameters&,
         const Protocol2PublicList&, const Protocol2Witness&,
         sampling::RandomSource&, DiscreteGaussianProvider&,
         Protocol2AuxiliaryCommitmentProvider&);
+    friend Protocol2ProofBeginResult BeginProtocol2ProofForRSign(
+        const commitment::CommitmentKey&, const Protocol2Parameters&,
+        const Protocol2PublicList&, const Protocol2Witness&,
+        std::size_t, std::size_t, sampling::RandomSource&,
+        Protocol2RSignGaussianProvider&,
+        Protocol2AuxiliaryCommitmentProvider&);
+    friend Protocol2FirstStageLiftResponse
+    ComputeProtocol2FirstStageLiftResponse(
+        const Protocol2ProverState&, const commitment::CommitmentKey&,
+        const Protocol2Parameters&, const arithmetic::Polynomial&);
+    friend Protocol2ResponseLiftData ComputeProtocol2ResponseLiftData(
+        Protocol2ProverState&, const commitment::CommitmentKey&,
+        const Protocol2Parameters&, const arithmetic::Polynomial&);
     friend std::optional<Protocol2Response> RespondProtocol2Proof(
         Protocol2ProverState&, const commitment::CommitmentKey&,
         const Protocol2Parameters&, const arithmetic::Polynomial&,
@@ -113,6 +207,42 @@ Protocol2ProofBeginResult BeginProtocol2Proof(
     sampling::RandomSource& random,
     DiscreteGaussianProvider& gaussian,
     Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment);
+
+// Section 6 per-run first-message generation. The injected Gaussian provider
+// receives the run index and total repetition count so unresolved raw laws
+// cannot be silently replaced by Protocol 2's single-run widths.
+Protocol2ProofBeginResult BeginProtocol2ProofForRSign(
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& parameters,
+    const Protocol2PublicList& public_list,
+    const Protocol2Witness& witness,
+    std::size_t run_index,
+    std::size_t repetitions,
+    sampling::RandomSource& random,
+    Protocol2RSignGaussianProvider& gaussian,
+    Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment);
+
+// Computes challenge-dependent f lifts without applying rejection.
+Protocol2FirstStageLiftResponse ComputeProtocol2FirstStageLiftResponse(
+    const Protocol2ProverState& state,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& parameters,
+    const arithmetic::Polynomial& challenge);
+
+// Consumes the prover state and computes unreduced response and center lifts.
+Protocol2ResponseLiftData ComputeProtocol2ResponseLiftData(
+    Protocol2ProverState& state,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& parameters,
+    const arithmetic::Polynomial& challenge);
+
+// Converts accepted integer lifts to ring responses. Call only after the
+// relevant global rejection decision has accepted.
+Protocol2Response EncodeProtocol2Response(
+    const Protocol2FirstStageLiftResponse& first_stage,
+    Protocol2ResponseLiftData&& response_lifts,
+    const commitment::CommitmentKey& key,
+    const Protocol2Parameters& parameters);
 
 // Returns nullopt on either protocol rejection. The state is consumed on every
 // call; the caller must restart BeginProtocol2Proof after an abort.

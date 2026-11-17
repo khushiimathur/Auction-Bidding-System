@@ -17,7 +17,7 @@ the effective acceptance probability is
 
 ```text
 p = min(1, p_raw) = min(1, exp(r)),
-r = -1/phi - 1/(2*phi^2)
+r = -12/phi - 1/(2*phi^2)
     + (-2*<z,c> + ||c||^2)/(2*phi^2*K^2).
 ```
 
@@ -25,9 +25,16 @@ If `r >= 0`, `p_raw >= 1` and the comparison accepts with probability one.
 The initial audit found that Protocol 1 rejected positive `r` and delegated
 zero `r` to a negative-only provider. The helper has since been corrected: it
 accepts for `r >= 0` and calls the Bernoulli-exponential provider only for
-`r < 0`. The provider contract now documents that restricted domain. This
-matches Algorithm 1's comparison rule; it does not implement or certify the
-negative-exponent sampler.
+`r < 0`. The provider contract now documents that restricted domain.
+
+The rejection normalizer is
+`mu(phi)=exp(12/phi+1/(2*phi^2))`. The earlier implementation used
+`-1/phi` rather than `-12/phi` in `r`; this correction changes the acceptance
+probability (by a factor of `exp(-11/phi)` before clipping) and therefore the
+output distribution. The corrected helper still does not certify the
+negative-exponent sampler. This correction does not resolve the separate raw
+Gaussian sampling discrepancies, irrational parameter representation,
+Appendix E statistical-distance questions, or production-security concerns.
 
 This finding concerns the Bernoulli decision. The Gaussian input widths and
 support hypotheses must also match Lemma 6 for its distribution guarantee to
@@ -41,14 +48,14 @@ Algorithm 1 (§2.3, p. 8) defines
 
 ```text
 sigma = phi*K
-mu(phi) = exp(1/phi + 1/(2*phi^2))
+mu(phi) = exp(12/phi + 1/(2*phi^2))
 p_raw = (1/mu(phi)) * exp((-2*<z,c> + ||c||^2)/(2*sigma^2)).
 ```
 
 Writing `r = log(p_raw)` and substituting `sigma = phi*K` gives
 
 ```text
-r = -1/phi - 1/(2*phi^2)
+r = -12/phi - 1/(2*phi^2)
     + (-2*<z,c> + ||c||^2)/(2*phi^2*K^2).
 ```
 
@@ -211,6 +218,52 @@ statistically close to the common-scale distribution. It is not an exact
 discrete-Gaussian convolution. Any Protocol 2 rejection implementation must
 preserve the paper's statistical-closeness argument and account for its error;
 the former `sqrt(2md)` reading was incorrect.
+
+Section 6, printed p. 19, requires one first rejection over all `r` runs'
+concatenated `f` vectors (dimension `r*k*(beta-1)*d`) and one response
+rejection over the run-major concatenation
+`(z^1,z_b^1,z_c^1,...,z^r,z_b^r,z_c^r)` (dimension `3*r*m*d`). The
+corresponding center norm-square bounds are `k*r` and `3*B^2*m*d*r`. These
+are global decisions, not `r` independent per-run decisions. The stated
+extracted-randomness norm bound increases from `24*sqrt(3)*B*m*d` to
+`24*sqrt(3*r)*B*m*d`; this is an extraction bound, not a new per-run verifier
+response bound.
+
+The Section 6 Gaussian distributions are explicitly `D_s`:
+`s=12*d*sqrt(k*r)` for `f_{j,i}` (`i != 0`) and
+`s=12*B*sqrt(3*m*d*r)` for each response distribution. Section 2.3 gives
+`s=sigma*sqrt(2*pi)`, so the equivalent provider variances would be
+`72*d^2*k*r/pi` and `216*B^2*m*d*r/pi`. They are irrational; the current
+`ExactDiscreteGaussianProvider` accepts rational `sigma_squared` for
+`D_sigma` and cannot represent these Section 6 laws exactly. No Section 6
+sampler or batch-rejection caller exists in current source.
+
+An exact \(D_s\) sampler is feasible without converting to irrational
+`sigma_squared`. For rational \(S=s^2>0\) and any rational \(a>0\), use the
+two-sided geometric proposal with \(\lambda=e^{-\pi(2a/S)}\), then accept
+integer \(y\) with probability \(e^{-\pi(|y|-a)^2/S}\). Their product is
+proportional to \(e^{-\pi y^2/S}\). Both coins require certified rational
+interval refinement for \(\pi\)-dependent exponentials; the existing
+`BernoulliExponentialProvider` handles rational logarithms only. This is a
+proposed sampler design, not an implemented or validated exact provider. See
+`SAMPLER_PARAMETER_RESOLUTION.md` for the parameterized derivation and API.
+
+`ComputeProtocol2IntegerLiftResponses` is reusable per run and returns
+unreduced `z`, `z_b`, and `z_c` blocks of `m*d` coefficients. The current
+`RespondProtocol2Proof` performs both rejection calls locally and only then
+converts those lifts to ring residues; it cannot be used unchanged for the
+global decisions. Its private first-stage `rejection_accepts` calculation can
+be generalized to the concatenated `f` vector with `K^2=k*r`. The
+`AcceptProtocol2JointResponse` helper fixes each block at `m*d` and
+`K^2=3*B^2*m*d`; a repeated-run overload must accept `r*m*d` entries in each
+response/center block and use `K^2=3*B^2*m*d*r`. Keep the integer lifts until
+that global response decision passes.
+
+If either global decision fails, discard all first messages, prover states,
+commitments, challenges and partial responses, then regenerate all `r` runs.
+Keep the message, ring, key and public parameters fixed across retries. The
+current helper interfaces implement neither this restart orchestration nor
+the batch decisions.
 
 ## 5. Discrepancies and correction status
 
@@ -463,7 +516,7 @@ Use Esgin's §2.3 convention that `D_sigma^s` is the spherical discrete normal
 on `Z^s` with standard deviation `sigma`. Let `c` be fixed, or sampled from
 `h` independently of `y`, with support satisfying `||c|| <= K`; let
 `phi > 0`, `sigma = phi*K`, and
-`M = mu(phi) = exp(1/phi + 1/(2phi^2))`. Assume `y` is an exact sample from
+`M = mu(phi) = exp(12/phi + 1/(2phi^2))`. Assume `y` is an exact sample from
 `f = D_sigma^s`, and use Algorithm 1's ideal clipped acceptance decision.
 
 For fixed `c`, before rejection `z=y+c` has translated discrete-Gaussian
