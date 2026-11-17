@@ -145,7 +145,8 @@ private:
     mutable std::map<std::vector<std::uint8_t>, std::size_t> indices;
 };
 
-class IdAuxiliary final : public Protocol2AuxiliaryCommitmentProvider {
+class InsecureIdAuxiliaryCommitmentForTesting final
+    : public Protocol2AuxiliaryCommitmentProvider {
 public:
     AuxiliaryCommitmentOpening commit(
         const PolynomialVector&, const PolynomialVector&,
@@ -473,7 +474,7 @@ void test_batch_restart_global_rejections_and_verification() {
     ZeroByteSource random;
     TestContext context = make_context(random);
     RunIndexedGaussian gaussian;
-    IdAuxiliary auxiliary;
+    InsecureIdAuxiliaryCommitmentForTesting auxiliary;
     ScriptedRejection rejection({false, true, true}, {false, true});
     TestEncoder encoder;
 
@@ -575,7 +576,7 @@ void test_transcript_binding_for_all_inputs() {
     ZeroByteSource setup_random;
     TestContext context = make_context(setup_random);
     RunIndexedGaussian gaussian;
-    IdAuxiliary auxiliary;
+    InsecureIdAuxiliaryCommitmentForTesting auxiliary;
     ScriptedRejection rejection({true}, {true});
     PatternedByteSource random;
     BindingAwareEncoder encoder;
@@ -691,7 +692,7 @@ void test_exact_z_and_center_ordering() {
     ZeroByteSource setup_random;
     TestContext context = make_context(setup_random);
     RunIndexedGaussian gaussian;
-    IdAuxiliary auxiliary;
+    InsecureIdAuxiliaryCommitmentForTesting auxiliary;
     ScriptedRejection rejection({true}, {true});
     PatternedByteSource random;
     TestEncoder encoder;
@@ -791,7 +792,7 @@ void test_provider_and_entropy_failures() {
     ZeroByteSource setup_random;
     TestContext context = make_context(setup_random);
     RunIndexedGaussian gaussian;
-    IdAuxiliary auxiliary;
+    InsecureIdAuxiliaryCommitmentForTesting auxiliary;
     TestEncoder encoder;
     ThrowingRejection rejection;
     ZeroByteSource random;

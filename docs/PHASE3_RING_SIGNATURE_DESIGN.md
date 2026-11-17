@@ -726,9 +726,10 @@ Dilithium tests remain separate and must continue to pass.
    use NTL/GMP randomness for secret sampling without a security design.
 4. **Commitment module:** implement and review key generation, commit, open,
    homomorphism and bounds; add commitment tests.
-5. **Binary proof:** equation/prover/verifier core implemented behind injected
-   providers; production `aCom`, Gaussian and Bernoulli-exponential providers
-   remain required and need independent review.
+5. **Binary proof:** equation/prover/verifier core implemented behind provider
+   interfaces. A concrete salted SHAKE `aCom` is now available but needs
+   independent assumption review; production Gaussian/rejection parameters
+   remain unresolved.
 6. **One-out-of-many proof:** implement Protocol 2 and Section 6 repeated-run
    modifications, challenge-dependent equations, norm bounds and signature
    component representation; test all signer positions and padding.
@@ -754,9 +755,9 @@ Dilithium tests remain separate and must continue to pass.
 4. Confirm `v=k*beta` for the commitment message representation against a
    formal type-level transcription of Protocols 1 and 2; Appendix D does not
    tabulate `v` separately.
-5. Freeze the `aCom` construction and how it is instantiated in the
-   non-interactive protocol. The text permits treating it as a random oracle
-   but the production encoding/hash interface is not a ready-made API.
+5. Review the implemented salted SHAKE `aCom` assumptions and determine how it
+   is instantiated in the non-interactive protocol. The text permits
+   random-oracle treatment but does not prescribe this concrete encoding.
 6. Specify exact canonical encoding for ring order, commitments, first
    messages, challenge vector and responses, plus hash-to-`C^r` rejection or
    modulo-bias handling. Section 6 gives the mathematical hash input but not
@@ -1513,23 +1514,21 @@ Both rejection steps are part of the prover algorithm, not verifier checks:
 probability and a uniform real `u in [0,1)`. The theorem assumes
 `d>=7`, `m*d>=86`, and
 `q>(10*phi1*d*sqrt(k*d*(beta-1))+2)^2`; it gives 3-special soundness and
-soundness error `1/d` under its commitment and M-LWE assumptions. Section 4
-does not itself instantiate a concrete auxiliary commitment implementation:
-`aCom` is assumed hiding and binding (or modeled as a random oracle). Also,
-the project has no discrete-Gaussian or exact Bernoulli-exponential sampler.
-The proof module will expose explicit provider interfaces for these primitives
-and will not fake them using a normal distribution, floating-point exponential,
-or an unhashed test commitment. Until production providers are supplied and
-reviewed, tests can validate only the protocol equations and bounds, not
-zero-knowledge or soundness.
+soundness error `1/d` under its commitment and M-LWE assumptions. Section 4 leaves the auxiliary commitment abstract: `aCom` is assumed hiding
+and binding (or modeled as a random oracle). The project now provides a
+protocol-specific salted SHAKE256 instantiation; its assumptions and deviation
+are recorded in `PQ_LRS_DEVIATIONS_AND_SECURITY_NOTES.md`. Exact sampler
+primitives exist, but the production Section 6 scales and joint rejection
+provider remain unresolved. Until providers and the complete protocol are
+independently reviewed, tests validate only selected equations and code paths,
+not zero-knowledge or soundness.
 
-For the project baseline, `k=2`, `beta=8`, `v=16`, `d=256`, `m=13`, `B_bound=1`,
-and `phi1=phi2=22` per Section 6.1. The exact production q and
-commitment binding bound remain unfinalized. Parameters and all verifier norm
-comparisons will be represented with exact rational squared bounds; no field
-inverse is used. Subsequent implementation uses the already existing
-polynomial, matrix, commitment, and OS-random-source code. No Fiat–Shamir
-transform or one-out-of-many logic is part of this step.
+For the paper's \(N=64\) row, `k=2`, `beta=8`, `v=16`, `d=256`, `m=13`,
+`B_bound=1`, and `phi1=phi2=22` per Section 6.1. A code-selected exact q and
+commitment bound now exist in the named profile, but are not security-final.
+Parameters and verifier norm comparisons use exact rational squared bounds; no
+field inverse is used. No Fiat–Shamir transform or one-out-of-many logic was
+part of the original Protocol 1 implementation step.
 
 #### Implemented protocol core
 
@@ -1547,14 +1546,13 @@ norm bound at least as large as Theorem 1's calculated `T` bound. These are
 arithmetic preconditions only; validation does not estimate M-LWE or M-SIS
 hardness or establish that the supplied commitment key is binding/hiding.
 
-The sampler source currently provides OS-backed bytes, unbiased uniform values,
-and bounded values. It does **not** implement Esgin's discrete Gaussian or
-exact Bernoulli-exponential distribution. The proof core therefore requires
-provider implementations supplied by its caller; no production provider is
-included. `aCom` is also injected because the paper assumes a hiding/binding
-auxiliary commitment (or random oracle), but the project has not selected a
-concrete construction or transcript encoding. This is an injectable protocol
-core, not a production-ready signing implementation.
+The sampler source provides OS-backed bytes, exact Gaussian and
+Bernoulli-exponential primitives. The proof core still requires callers to
+configure the paper's production scales and rejection behavior. The
+`Shake256AuxiliaryCommitmentProvider` implements the abstract `aCom` input
+tuples, but remains an injected provider so callers can select it explicitly;
+it does not complete the non-interactive transcript. This is not a
+production-ready signing implementation.
 
 `tests/test_binary_proof.cpp` exercises challenge mapping, an honest algebraic
 transcript with deterministic **test-only** Gaussian/Bernoulli/auxiliary
@@ -1590,8 +1588,9 @@ or the complete Esgin ring signature.
 2. Connect the exact Bernoulli-exponential sampler to Algorithm 1 with the
    paper's parameters. Floating-point approximate acceptance and ordinary
    PRNGs are not substitutes.
-3. Select/instantiate a hiding and binding `aCom` (or a precise random-oracle
-   model) with canonical transcript serialization and domain separation.
+3. Independently review and integrate the salted SHAKE `aCom` under its stated
+   hiding/binding assumptions; complete canonical signature-transcript
+   serialization and domain separation separately.
 4. Independently validate the named profile's q selection, commitment bounds,
    and associated M-LWE/M-SIS estimates before calling them production-ready.
 5. Review integer-lift and centered-residue semantics against the proof
@@ -1637,7 +1636,7 @@ reject TestOnly parameters. This gates accidental use of the tiny fixtures;
 it does not make the named parameter profiles production-secure.
 
 The profile source and its dedicated test are registered in CMake. The
-current full configured CTest run passed 21/21 tests, including optional
+current full configured CTest run passed 22/22 tests, including optional
 Dilithium Round 2/3 tests. The demo CLI also builds and its key-generation
 smoke test succeeds. These results validate code paths and arithmetic checks
 only, not cryptographic security.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(lrs_demo_keygen LANGUAGES CXX)
+project(lrs_demo_keygen LANGUAGES C CXX)
 
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../cpp_backend"

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Lattice_LRS LANGUAGES CXX)
+project(Lattice_LRS LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -101,6 +101,13 @@ add_executable(parameter_profile_test tests/test_parameter_profile.cpp)
 target_link_libraries(parameter_profile_test PRIVATE lattice_lrs_backend)
 add_test(NAME parameter_profile_test COMMAND parameter_profile_test)
 
+add_executable(shake256_auxiliary_commitment_test
+    tests/test_shake256_auxiliary_commitment.cpp)
+target_link_libraries(shake256_auxiliary_commitment_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME shake256_auxiliary_commitment_test
+    COMMAND shake256_auxiliary_commitment_test)
+
 option(LATTICE_LRS_BUILD_DILITHIUM_TESTS
     "Build isolated tests against both official Dilithium reference implementations"
     OFF
@@ -150,11 +157,11 @@ if(LATTICE_LRS_BUILD_DILITHIUM_TESTS)
         "${DILITHIUM_ROUND3_REF_DIR}/ntt.c"
         "${DILITHIUM_ROUND3_REF_DIR}/reduce.c"
         "${DILITHIUM_ROUND3_REF_DIR}/rounding.c"
-        "${DILITHIUM_ROUND3_REF_DIR}/fips202.c"
         "${DILITHIUM_ROUND3_REF_DIR}/symmetric-shake.c"
         "${DILITHIUM_ROUND3_REF_DIR}/randombytes.c"
     )
     target_include_directories(dilithium_round3 PUBLIC "${DILITHIUM_ROUND3_REF_DIR}")
+    target_link_libraries(dilithium_round3 PUBLIC lattice_lrs_fips202)
     target_compile_definitions(dilithium_round3 PUBLIC DILITHIUM_MODE=5)
     target_compile_features(dilithium_round3 PUBLIC c_std_99)
 

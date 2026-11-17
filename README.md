@@ -119,7 +119,8 @@ exercise interfaces and control flow only.
 
 - C++17 and CMake 3.16 or newer.
 - NTL and GMP development headers and libraries.
-- A C compiler when the optional Dilithium reference tests are enabled.
+- A C compiler for the shared vendored FIPS 202 SHAKE implementation and
+  optional Dilithium reference tests.
 - Python 3 and Streamlit for the optional local demo in `python/demo/`. It
   invokes a small C++ wrapper; it is not a Python binding to the backend.
 
@@ -222,6 +223,11 @@ ctest --test-dir build-dilithium --output-on-failure
 - Protocol 2 polynomial expansion and \(E_j\) construction, response
   generation, integer-lift handling, joint response rejection, and
   prover/verifier logic.
+- A concrete SHAKE256 salted auxiliary commitment provider for Protocol 1 and
+  Protocol 2, using distinct domains, length-prefixed encodings, a 32-byte
+  random opening, and a 32-byte digest. Its hiding/binding claims are
+  conditional on the documented computational assumptions; this does not
+  complete or prove the Esgin security argument.
 - Named parameter profiles for \(N=64,256,1024,4096\), with exact integer
   checks for \(N=\beta^k\), \(v=k\beta\), the repeated Assumption 1, and
   conservative \(T_1/T'\) q-side bounds. These profiles are not security
@@ -236,13 +242,15 @@ ctest --test-dir build-dilithium --output-on-failure
 - A Streamlit educational demo for C++ key generation and public-key ring
   membership. It does not generate or verify an Esgin signature.
 
-The current configured build registers 21 CTest tests and the latest full run
-passed 21/21, including the optional Dilithium tests. A fresh default CMake
+The current configured build registers 22 CTest tests and the latest full run
+passed 22/22, including the optional Dilithium tests. A fresh default CMake
 configuration disables those two optional tests.
 
 ### In Progress
 
 - Production RSign/RVerify provider configuration and end-to-end validation.
+- Independent review of the SHAKE256 `aCom` instantiation and its random-oracle
+  hiding/collision-resistance binding assumptions.
 - The Section 6 distributions, their batch scale profile, and exact global
   rejection parameters. Existing exact samplers do not by themselves establish
   that the required repeated-run input laws are produced.
@@ -252,8 +260,6 @@ configuration disables those two optional tests.
 - Security-reviewed final parameter selection. Named profiles and exact
   moduli are present, but the code-selected \(q\) values are not paper values
   or security approvals.
-- A concrete cryptographically justified auxiliary commitment `aCom`; the
-  current API is an injected provider.
 - Production canonical Fiat-Shamir transcript serialization and a concrete
   hash-to-challenges implementation.
 - Production Section 6 Gaussian scale and global rejection providers.
@@ -272,5 +278,8 @@ rejection interface, but canonical signature/transcript serialization is not
 finalized. The parameter code checks the q member of the Section 6.1 binding
 inequality, not its lattice-reduction member; no M-SIS/M-LWE hardness
 re-estimation has been done. No claim is made that the complete PQ-LRS or WCM
-scheme is secure, fully post-quantum validated, or production-ready. This is
-not a complete sealed-bid auction application.
+scheme is secure, fully post-quantum validated, or production-ready. The
+salted-hash `aCom` is computationally hiding only under its random-oracle
+assumption and has collision-resistance-based binding; the implementation
+does not establish the full Esgin proof. This is not a complete sealed-bid
+auction application.

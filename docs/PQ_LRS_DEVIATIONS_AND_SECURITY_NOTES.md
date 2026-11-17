@@ -49,6 +49,53 @@ validations. `TestOnlySetupParameters` and `*ForTesting` APIs mark the
 pre-existing toy fixtures; production keygen/sign/verify entry points reject
 those fixtures.
 
+## Implemented `aCom` construction (Task 2)
+
+The existing provider inputs specify the complete protocol-local tuples:
+Protocol 1 commits to `(A,C,D)`; Protocol 2 commits to `(A,B,C,D,E)`, where
+`E` is an ordered list of polynomial vectors. No commitment-key, message, ring,
+or response field is added to `aCom`; those belong to other protocol
+interfaces/transcripts.
+
+The implementation is a versioned salted hash commitment:
+
+1. Encode a distinct fixed domain label (`PQ-LRS/aCom/Protocol1/v1` or
+   `PQ-LRS/aCom/Protocol2/v1`), then each ordered field with an explicit field
+   tag (`0x01..0x03` for Protocol 1's `A,C,D`; `0x01..0x05` for Protocol 2's
+   `A,B,C,D,E`) and 64-bit big-endian length/count prefixes. The version is
+   also encoded as a 64-bit big-endian integer `1`. Encode every polynomial's
+   degree, modulus, coefficient count, and canonical signed decimal ASCII
+   coefficients; encode nested vectors with their outer and inner counts.
+2. Obtain a fresh 32-byte opening `d_a` from the passed `RandomSource`. A
+   production signer must supply the existing OS-backed `SystemRandomSource`;
+   entropy errors must propagate.
+3. Compute a 32-byte digest as
+   `SHAKE256(encoding || 0xf0 || length(d_a) || d_a, 32)`.
+   Verification requires a 32-byte digest and opening, recomputes the digest
+   for the supplied protocol tuple, and compares all digest bytes without
+   content-dependent early exit.
+
+The SHAKE implementation is the vendored Round 3 `fips202.c`, whose exported
+symbols use the `pqcrystals_dilithium_fips202_ref_*` namespace. CMake builds
+one shared `lattice_lrs_fips202` target used by both the backend and optional
+Round 3 reference tests, rather than compiling the same source into both
+libraries. Round 2 uses separate unprefixed symbols. The FIPS 202 API has no
+hash-error return value; allocation failures and `RandomSource` exceptions
+propagate, and there is no fallback path.
+
+This salted hash is not a perfectly hiding commitment. Its hiding argument is
+computational and modeled in the random-oracle model with an unpredictable,
+uniform 256-bit opening. Binding relies on collision resistance of the
+256-bit-output hash (at most about 128-bit generic collision strength). These
+are construction assumptions, not a proof that SHAKE256 instantiates every
+assumption made by Esgin et al. The paper's abstraction permits an assumed
+hiding/binding `aCom` or a random-oracle treatment; this concrete salted-hash
+choice is an implementation instantiation and therefore a deviation from the
+paper's unspecified concrete choice. Even if this provider is implemented
+correctly, it does not establish the full Esgin proof: the transcript/hash,
+Section 6 distributions and rejection, parameter hardness, and protocol
+composition remain separate obligations.
+
 ## Security-sensitive integration findings
 
 - `wang-0218/ring-signature` contains non-cryptographic randomness and non-canonical textual hashing; verification checks are commented out. It is not suitable for production or partial cryptographic reuse.
@@ -56,7 +103,7 @@ those fixtures.
 - Raptor is GPL-3.0 and a separate NTRU/Falcon construction; the inspected serialization offsets need maintainer explanation. It is not a WCM OTS/tag adapter.
 - Calamari/Falafl and several other candidates have distinct relations and/or licensing and audit constraints. See the component map for each repository’s observed license and caveats.
 - Neither upstream Dilithium source should be modified or treated as implementing ring membership, Esgin proofs, or WCM linkability. An adapter must keep the upstream implementation intact and use the correct historical variant and exact signed bytes.
-- The latest configured full CTest run passed 21/21 tests, including optional Dilithium Round 2/3 tests. This is functional evidence only. It is not a cryptographic security evaluation and does not validate protocol composition.
+- The latest configured full CTest run passed 22/22 tests, including optional Dilithium Round 2/3 tests. This is functional evidence only. It is not a cryptographic security evaluation and does not validate protocol composition.
 
 ## Safe status statement
 

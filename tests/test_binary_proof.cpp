@@ -270,7 +270,8 @@ std::vector<std::uint8_t> encode_for_test(const PolynomialVector& A,
     return {text.begin(), text.end()};
 }
 
-class TestAuxiliaryCommitment final : public AuxiliaryCommitmentProvider {
+class InsecureAuxiliaryCommitmentForTesting final
+    : public AuxiliaryCommitmentProvider {
 public:
     AuxiliaryCommitmentOpening commit(const PolynomialVector& A,
                                       const PolynomialVector& C,
@@ -349,7 +350,7 @@ void test_protocol_one_honest_transcript_and_tampering() {
     ZeroByteSource random;
     OneThenZeroGaussian gaussian(8);
     FixedExponential accept_all(true);
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     auto begun = lattice_lrs::proofs::BeginBinaryProof(
         key, proof_parameters, public_commitment, witness,
@@ -430,7 +431,7 @@ void test_protocol_one_with_exact_gaussian_providers() {
     ScriptedExponential exponential(std::move(coin_outcomes));
     ExactDiscreteGaussianProvider exact_gaussian(exponential);
     RecordingExactGaussian gaussian(exact_gaussian);
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     auto begun = lattice_lrs::proofs::BeginBinaryProof(
         key, proof_parameters, public_commitment, witness,
@@ -481,7 +482,7 @@ void test_protocol_one_uses_exact_exponential_coin() {
     ExactBernoulliExponentialProvider exponential;
     ExactDiscreteGaussianProvider exact_gaussian(exponential);
     FirstExactThenZeroGaussian gaussian(exact_gaussian);
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     auto begun = lattice_lrs::proofs::BeginBinaryProof(
         key, proof_parameters, public_commitment, witness,
         random, gaussian, auxiliary);
@@ -529,7 +530,7 @@ void test_protocol_one_preserves_gaussian_integer_lifts() {
     ScriptedExponential scripted_exponential(std::move(decisions));
     ExactDiscreteGaussianProvider exact_gaussian(scripted_exponential);
     RecordingExactGaussian gaussian(exact_gaussian);
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     auto begun = lattice_lrs::proofs::BeginBinaryProof(
         key, proof_parameters, public_commitment, witness,
         random, gaussian, auxiliary);
@@ -560,7 +561,7 @@ void test_protocol_one_sampler_failures_propagate() {
     const BinaryWitness witness = valid_witness(p);
     const PolynomialVector public_commitment = lattice_lrs::commitment::Com(
         key, witness.bits, witness.randomness);
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     {
         FailingByteSource random;
@@ -602,7 +603,7 @@ void test_protocol_one_response_norm_boundaries() {
     const Polynomial challenge = lattice_lrs::proofs::BinaryChallengeFromExponent(p, 0);
     const PolynomialVector public_commitment(p.n, Polynomial(p.degree, p.q));
     ZeroByteSource random;
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     const auto make_transcript = [&](const Polynomial& f_nonzero,
                                      const PolynomialVector& z_b,
@@ -697,7 +698,7 @@ void test_rejection_abort_and_single_use_state() {
     ZeroByteSource random;
     ZeroGaussian gaussian;
     FixedExponential reject_first(false);
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     auto begun = lattice_lrs::proofs::BeginBinaryProof(
         key, proof_parameters, public_commitment, witness,
         random, gaussian, auxiliary);
@@ -734,7 +735,7 @@ void test_rejection_exponent_sign_branches() {
         ZeroByteSource random;
         FirstValueThenZeroGaussian gaussian(z(first_gaussian));
         RecordingExponential exponential;
-        TestAuxiliaryCommitment auxiliary;
+        InsecureAuxiliaryCommitmentForTesting auxiliary;
         auto begun = lattice_lrs::proofs::BeginBinaryProof(
             key, proof_parameters, public_commitment, witness,
             random, gaussian, auxiliary);
@@ -766,7 +767,7 @@ void test_invalid_witness_and_parameters() {
     const BinaryProofParameters proof_parameters = test_proof_parameters();
     ZeroByteSource random;
     ZeroGaussian gaussian;
-    TestAuxiliaryCommitment auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     BinaryWitness bad = valid_witness(p);
     bad.bits[1] = Polynomial(p.degree, p.q, {z(1)});
     bool rejected = false;

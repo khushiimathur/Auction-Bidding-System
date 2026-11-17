@@ -107,7 +107,8 @@ struct AuxiliaryTuple {
     }
 };
 
-class TransparentTestAuxiliary final : public Protocol2AuxiliaryCommitmentProvider {
+class InsecureAuxiliaryCommitmentForTesting final
+    : public Protocol2AuxiliaryCommitmentProvider {
 public:
     AuxiliaryCommitmentOpening commit(
         const PolynomialVector& A, const PolynomialVector& B,
@@ -188,7 +189,7 @@ ProverRun begin_proof(const CommitmentKey& key,
 
 void rebind_auxiliary(Protocol2FirstMessage& first,
                       Protocol2Response& response,
-                      TransparentTestAuxiliary& auxiliary,
+                      InsecureAuxiliaryCommitmentForTesting& auxiliary,
                       RandomSource& random) {
     const AuxiliaryCommitmentOpening opening = auxiliary.commit(
         first.A, first.B, first.C, first.D, first.E, random);
@@ -205,7 +206,7 @@ void test_round_trip_and_protocol2_widths() {
     ZeroByteSource random;
     ZeroGaussian gaussian;
     AlwaysAccept exponential;
-    TransparentTestAuxiliary auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     ProverRun prover = begin_proof(
         key, parameters, list, witness, random, gaussian, auxiliary);
@@ -261,7 +262,7 @@ void test_protocol2_zero_digit_norm_bound() {
     first.D = zero_n;
     first.E = {zero_n};
     ZeroByteSource random;
-    TransparentTestAuxiliary auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     const AuxiliaryCommitmentOpening opening = auxiliary.commit(
         first.A, first.B, first.C, first.D, first.E, random);
     first.auxiliary_commitment = opening.commitment;
@@ -308,7 +309,7 @@ void test_hand_calculated_protocol2_list_equation_and_ordering() {
         {Polynomial(p.degree, p.q, {z(6)})},
     };
     ZeroByteSource random;
-    TransparentTestAuxiliary auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     Protocol2Response response;
     rebind_auxiliary(first, response, auxiliary, random);
     response.f_nonzero = {
@@ -351,7 +352,7 @@ void test_challenge_response_commitment_and_opening_failures() {
     ZeroByteSource random;
     ZeroGaussian gaussian;
     AlwaysAccept exponential;
-    TransparentTestAuxiliary auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     ProverRun prover = begin_proof(
         key, parameters, list, witness, random, gaussian, auxiliary);
@@ -409,7 +410,7 @@ void test_response_bounds_and_malformed_dimensions() {
     ZeroByteSource random;
     ZeroGaussian gaussian;
     AlwaysAccept exponential;
-    TransparentTestAuxiliary auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
     ProverRun prover = begin_proof(
         key, parameters, list, witness, random, gaussian, auxiliary);
     const auto response = RespondProtocol2Proof(
@@ -464,7 +465,7 @@ void test_rejection_failures_propagate() {
     const Polynomial challenge = BinaryChallengeFromExponent(key.parameters(), 0);
     ZeroByteSource random;
     ZeroGaussian gaussian;
-    TransparentTestAuxiliary auxiliary;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
 
     ProverRun aborting = begin_proof(
         key, parameters, list, witness, random, gaussian, auxiliary);

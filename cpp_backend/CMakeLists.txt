@@ -21,6 +21,14 @@ if(NOT GMP_INCLUDE_DIR OR NOT GMP_LIBRARY OR NOT NTL_INCLUDE_DIR OR NOT NTL_LIBR
         "Could not find NTL and GMP. Install them with Homebrew or set their include/library paths.")
 endif()
 
+set(DILITHIUM_ROUND3_REF_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../dilithium/upstream-round3/ref")
+add_library(lattice_lrs_fips202 STATIC
+    "${DILITHIUM_ROUND3_REF_DIR}/fips202.c")
+target_include_directories(lattice_lrs_fips202 PRIVATE
+    "${DILITHIUM_ROUND3_REF_DIR}")
+target_compile_features(lattice_lrs_fips202 PRIVATE c_std_99)
+
 add_library(GMP::GMP UNKNOWN IMPORTED)
 set_target_properties(GMP::GMP PROPERTIES
     IMPORTED_LOCATION "${GMP_LIBRARY}"
@@ -45,6 +53,7 @@ add_library(lattice_lrs_backend STATIC
     src/proofs/binary_proof.cpp
     src/proofs/discrete_gaussian.cpp
     src/proofs/discrete_gaussian_s.cpp
+    src/proofs/shake256_auxiliary_commitment.cpp
     src/proofs/protocol2_commitment.cpp
     src/proofs/protocol2_polynomial.cpp
     src/proofs/protocol2_proof.cpp
@@ -57,7 +66,9 @@ add_library(lattice_lrs_backend STATIC
 target_include_directories(lattice_lrs_backend PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(lattice_lrs_backend PUBLIC NTL::NTL)
+target_include_directories(lattice_lrs_backend PRIVATE
+    "${DILITHIUM_ROUND3_REF_DIR}")
+target_link_libraries(lattice_lrs_backend PUBLIC NTL::NTL lattice_lrs_fips202)
 target_compile_features(lattice_lrs_backend PUBLIC cxx_std_17)
 if(APPLE)
     target_link_libraries(lattice_lrs_backend PUBLIC "-framework Security")
