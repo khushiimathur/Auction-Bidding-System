@@ -51,6 +51,14 @@ those fixtures.
 
 ## Implemented `aCom` construction (Task 2)
 
+**Compatibility assessment:** the provider's commit/open call structure matches
+the paper-level interface `(c_a,d_a)=aCom(...)`: `c_a` is retained in the
+Protocol 1/2 first message and `d_a` is returned in the response and checked by
+the verifier. This is interface-compatible with the cited commit/open boundary,
+but it is **not** established as paper-compliant cryptographic construction.
+The Esgin paper does not specify a concrete `aCom` algorithm or opening/output
+sizes, so no claim of proof compatibility follows from the implementation.
+
 The existing provider inputs specify the complete protocol-local tuples:
 Protocol 1 commits to `(A,C,D)`; Protocol 2 commits to `(A,B,C,D,E)`, where
 `E` is an ordered list of polynomial vectors. No commitment-key, message, ring,
@@ -88,7 +96,14 @@ computational and modeled in the random-oracle model with an unpredictable,
 uniform 256-bit opening. Binding relies on collision resistance of the
 256-bit-output hash (at most about 128-bit generic collision strength). These
 are construction assumptions, not a proof that SHAKE256 instantiates every
-assumption made by Esgin et al. The paper's abstraction permits an assumed
+assumption made by Esgin et al. Revealing `d_a` in the response does not
+retroactively invalidate the commitment's hiding property, because hiding
+applies to the pre-opening transcript; it does expose the opening after the
+first-message commitment and allows the verifier to check it. Binding requires
+that no practical adversary can find two distinct encoded tuples/openings with
+the same 32-byte digest.
+
+The paper's abstraction permits an assumed
 hiding/binding `aCom` or a random-oracle treatment; this concrete salted-hash
 choice is an implementation instantiation and therefore a deviation from the
 paper's unspecified concrete choice. Even if this provider is implemented

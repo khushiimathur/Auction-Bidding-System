@@ -223,7 +223,7 @@ ctest --test-dir build-dilithium --output-on-failure
 - Protocol 2 polynomial expansion and \(E_j\) construction, response
   generation, integer-lift handling, joint response rejection, and
   prover/verifier logic.
-- A concrete SHAKE256 salted auxiliary commitment provider for Protocol 1 and
+- An experimental SHAKE256 salted auxiliary commitment provider for Protocol 1 and
   Protocol 2, using distinct domains, length-prefixed encodings, a 32-byte
   random opening, and a 32-byte digest. Its hiding/binding claims are
   conditional on the documented computational assumptions; this does not
@@ -266,6 +266,34 @@ configuration disables those two optional tests.
 - WCM linkability tag generation/verification and Dilithium OTS integration.
 - End-to-end real-signature tests and independent cryptographic security
   validation.
+
+### LPCom bid-amount commitment (new)
+
+- `cpp_backend/include/lattice_lrs/lpcom/` implements `GenCom`/`Com`/`Unv`
+  from Cabarcas, Demirel, Göpfert, Lancrenon, and Wunderer, "An
+  Unconditionally Hiding and Long-Term Binding Post-Quantum Commitment
+  Scheme" (ePrint 2015/628), Figure 1: `c = A1·v + A2·r + e mod q`. This is
+  a separate, plain-`Z_q`-vector module, distinct from the ring-based
+  Esgin commitment used internally by the ring signature.
+- `SealedBidAuction` now commits each bid amount via LPCom before signing;
+  the LRS signature covers the commitment vector, not the raw amount.
+  `RevealOpening`/`VerifyOpening` support a separate settlement-stage
+  opening check, and the public submission log never carries the opening.
+- Two parameter profiles exist (`ExperimentalDemoParameters`,
+  `ScalarMessageDemoParameters`), both explicitly labeled experimental,
+  demo-scale, and **not** a post-quantum security claim.
+- **Known issue, not yet fixed:** `tests/test_lpcom.cpp` and
+  `tests/test_sealed_bid_auction_lpcom.cpp` currently fail 2 of ~16
+  assertions. The cause is a pre-existing bug in the shared
+  `sampling::sample_uniform_coefficient` utility (`sampler.cpp`): its
+  byte-masking logic assumes NTL's `ZZFromBytes` is big-endian, but it is
+  little-endian, which makes uniform sampling degenerate (collapsing to a
+  tiny value set) for moduli such as 257. This affects any caller of that
+  utility with a non-byte-aligned modulus, not just LPCom, and has not
+  been fixed yet.
+- Not yet integrated: the Streamlit demo (`python/demo/app.py`) and the
+  `auction_cli.cpp` line protocol do not expose LPCom's commitment/opening
+  flow; `docs/` has no LPCom-specific write-up yet.
 
 ### Security and Production Readiness
 

@@ -108,6 +108,75 @@ target_link_libraries(shake256_auxiliary_commitment_test
 add_test(NAME shake256_auxiliary_commitment_test
     COMMAND shake256_auxiliary_commitment_test)
 
+add_executable(canonical_rsign_transcript_test
+    tests/test_canonical_rsign_transcript.cpp)
+target_link_libraries(canonical_rsign_transcript_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME canonical_rsign_transcript_test
+    COMMAND canonical_rsign_transcript_test)
+
+add_executable(dilithium_ots_test tests/test_dilithium_ots.cpp)
+target_link_libraries(dilithium_ots_test PRIVATE lattice_lrs_backend)
+add_test(NAME dilithium_ots_test COMMAND dilithium_ots_test)
+
+add_executable(public_key_mask_test tests/test_public_key_mask.cpp)
+target_link_libraries(public_key_mask_test PRIVATE lattice_lrs_backend)
+add_test(NAME public_key_mask_test COMMAND public_key_mask_test)
+
+add_executable(linkable_ring_signature_test
+    tests/test_linkable_ring_signature.cpp)
+target_link_libraries(linkable_ring_signature_test PRIVATE lattice_lrs_backend)
+add_test(NAME linkable_ring_signature_test COMMAND linkable_ring_signature_test)
+
+add_executable(link_test tests/test_link.cpp)
+target_link_libraries(link_test PRIVATE lattice_lrs_backend)
+add_test(NAME link_test COMMAND link_test)
+
+add_executable(production_rsign_providers_test
+    tests/test_production_rsign_providers.cpp)
+target_link_libraries(production_rsign_providers_test PRIVATE lattice_lrs_backend)
+add_test(NAME production_rsign_providers_test
+    COMMAND production_rsign_providers_test)
+
+add_executable(production_rsign_integration_test
+    tests/test_production_rsign_integration.cpp)
+target_link_libraries(production_rsign_integration_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME production_rsign_integration_test
+    COMMAND production_rsign_integration_test)
+
+add_executable(production_lrsign_integration_test
+    tests/test_production_lrsign_integration.cpp)
+target_link_libraries(production_lrsign_integration_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME production_lrsign_integration_test
+    COMMAND production_lrsign_integration_test)
+
+add_executable(sealed_bid_auction_test
+    tests/test_sealed_bid_auction.cpp)
+target_link_libraries(sealed_bid_auction_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME sealed_bid_auction_test
+    COMMAND sealed_bid_auction_test)
+
+add_executable(lpcom_test tests/test_lpcom.cpp)
+target_link_libraries(lpcom_test PRIVATE lattice_lrs_backend)
+add_test(NAME lpcom_test COMMAND lpcom_test)
+
+add_executable(sealed_bid_auction_lpcom_test
+    tests/test_sealed_bid_auction_lpcom.cpp)
+target_link_libraries(sealed_bid_auction_lpcom_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME sealed_bid_auction_lpcom_test
+    COMMAND sealed_bid_auction_lpcom_test)
+
+add_executable(playground_session_test
+    tests/test_playground_session.cpp)
+target_link_libraries(playground_session_test
+    PRIVATE lattice_lrs_backend)
+add_test(NAME playground_session_test
+    COMMAND playground_session_test)
+
 option(LATTICE_LRS_BUILD_DILITHIUM_TESTS
     "Build isolated tests against both official Dilithium reference implementations"
     OFF

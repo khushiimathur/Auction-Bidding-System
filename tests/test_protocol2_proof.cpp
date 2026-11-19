@@ -1,8 +1,10 @@
 #include "lattice_lrs/proofs/protocol2_proof.hpp"
 
+#include "lattice_lrs/ring_signature/parameter_profile.hpp"
 #include "lattice_lrs/sampling/random_source.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -267,6 +269,67 @@ void test_protocol2_zero_digit_norm_bound() {
         first.A, first.B, first.C, first.D, first.E, random);
     first.auxiliary_commitment = opening.commitment;
 
+    // d=86, k=1, phi1=1, beta=3, r=1 (default): the corrected linear
+    // bound is 25*phi1^2*d*k*r*(beta-1) = 25*86*2 = 4300. With
+    // challenge x=X^0=1, f_{j,0} = x - (f_nonzero[0]+f_nonzero[1]) =
+    // 1 - 64 = -63, whose squared norm 3969 is within the corrected
+    // linear bound but would also have passed the OLD, buggy squared
+    // exponent (25*86*4=8600) -- see
+    // test_protocol2_f_zero_bound_is_linear_not_squared_in_beta_minus_one
+    // below for a value that distinguishes the two.
+    Protocol2Response response;
+    response.f_nonzero = {
+        Polynomial(p.degree, p.q, {z(32)}),
+        Polynomial(p.degree, p.q, {z(32)})};
+    response.auxiliary_opening = opening.opening;
+    response.z = zero_opening;
+    response.z_b = zero_opening;
+    response.z_c = zero_opening;
+
+    const Polynomial challenge =
+        lattice_lrs::proofs::BinaryChallengeFromExponent(p, 0);
+    require(VerifyProtocol2Proof(
+                key, parameters, list, first, challenge, response, auxiliary),
+            "Protocol 2 f_{j,0} bound must scale by (beta - 1) outside sqrt");
+}
+
+// Regression test for the (beta-1) exponent fix: constructs an f_{j,0}
+// value whose squared norm is BETWEEN the correct linear bound and the
+// old, buggy squared bound, so it only distinguishes the two if the
+// linear bound is actually enforced.
+void test_protocol2_f_zero_bound_is_linear_not_squared_in_beta_minus_one() {
+    const CommitmentKey key = make_key(3);
+    const Protocol2Parameters parameters{
+        1, 3,
+        lattice_lrs::proofs::PositiveRational(z(1), z(1)),
+        lattice_lrs::proofs::PositiveRational(z(1), z(1))};
+    const auto& p = key.parameters();
+    const Polynomial zero(p.degree, p.q);
+    const PolynomialVector zero_n(p.n, zero);
+    const PolynomialVector zero_message(p.v, zero);
+    const PolynomialVector zero_opening(p.m, zero);
+    const PolynomialVector zero_commitment =
+        lattice_lrs::commitment::Com(key, zero_message, zero_opening);
+    const Protocol2PublicList list(3, zero_commitment);
+
+    Protocol2FirstMessage first;
+    first.A = zero_n;
+    first.B = zero_n;
+    first.C = zero_n;
+    first.D = zero_n;
+    first.E = {zero_n};
+    ZeroByteSource random;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
+    const AuxiliaryCommitmentOpening opening = auxiliary.commit(
+        first.A, first.B, first.C, first.D, first.E, random);
+    first.auxiliary_commitment = opening.commitment;
+
+    // Correct (linear) bound: 25*1*86*1*1*2 = 4300 (sqrt ~65.57).
+    // Old, buggy (squared) bound: 25*1*86*1*2^2 = 8600 (sqrt ~92.74).
+    // Choose f_{j,0} = 1 - 70 = -69, squared norm 4761: this is ABOVE
+    // the correct linear bound (4300) but BELOW the old squared bound
+    // (8600), so it must be rejected now and would have wrongly been
+    // accepted before this fix.
     Protocol2Response response;
     response.f_nonzero = {
         Polynomial(p.degree, p.q, {z(35)}),
@@ -278,9 +341,224 @@ void test_protocol2_zero_digit_norm_bound() {
 
     const Polynomial challenge =
         lattice_lrs::proofs::BinaryChallengeFromExponent(p, 0);
-    require(VerifyProtocol2Proof(
+    require(!VerifyProtocol2Proof(
                 key, parameters, list, first, challenge, response, auxiliary),
-            "Protocol 2 f_{j,0} bound must scale by (beta - 1) outside sqrt");
+            "a value satisfying only the old squared-(beta-1) bound must "
+            "now be rejected by the corrected linear-(beta-1) bound");
+}
+
+PolynomialVector negate(const PolynomialVector& values) {
+    PolynomialVector result;
+    result.reserve(values.size());
+    for (const Polynomial& value : values) {
+        result.push_back(Polynomial(value.degree(), value.modulus()) - value);
+    }
+    return result;
+}
+
+// Builds a self-consistent (all other equations trivially satisfied)
+// Protocol 2 transcript whose z-response is exactly `target_z`, by
+// choosing E_0 so that the final list/commitment equation (step 6) holds
+// for that specific z: with an all-zero public list and k=1, step 6
+// reduces to -E_0 == Com(key, 0, z), so E_0 := -Com(key, 0, target_z)
+// makes it hold by construction, for ANY target_z. f_nonzero is left at
+// zero so the f-bound checks (steps 3-4) trivially pass regardless of r,
+// isolating the z/z_b/z_c bound (step 5) as the only thing that can
+// reject or accept depending on `repetitions`.
+struct ZBoundFixture {
+    CommitmentKey key;
+    Protocol2Parameters parameters;
+    Protocol2PublicList list;
+    Protocol2FirstMessage first;
+    Protocol2Response response;
+    Polynomial challenge;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
+};
+
+ZBoundFixture make_z_bound_fixture(const NTL::ZZ& target_z_coefficient) {
+    CommitmentKey key = make_key();
+    const Protocol2Parameters parameters = make_parameters();  // k=1, beta=2, phi1=phi2=1
+    const auto& p = key.parameters();
+    const Polynomial zero(p.degree, p.q);
+    const PolynomialVector zero_n(p.n, zero);
+    const PolynomialVector zero_message(p.v, zero);
+    const PolynomialVector zero_opening(p.m, zero);
+    const PolynomialVector zero_commitment =
+        lattice_lrs::commitment::Com(key, zero_message, zero_opening);
+    const std::size_t list_size = std::size_t(1) << parameters.k;  // beta^k, beta=2
+    const Protocol2PublicList list(list_size, zero_commitment);
+
+    const PolynomialVector target_z{
+        Polynomial(p.degree, p.q, {target_z_coefficient})};
+    const PolynomialVector required_e0 =
+        negate(lattice_lrs::commitment::Com(key, zero_message, target_z));
+
+    Protocol2FirstMessage first;
+    first.A = zero_n;
+    first.B = zero_n;
+    first.C = zero_n;
+    first.D = zero_n;
+    first.E = {required_e0};
+    ZeroByteSource random;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
+    const AuxiliaryCommitmentOpening opening = auxiliary.commit(
+        first.A, first.B, first.C, first.D, first.E, random);
+    first.auxiliary_commitment = opening.commitment;
+
+    Protocol2Response response;
+    response.f_nonzero = {zero};  // k*(beta-1) = 1 entry
+    response.auxiliary_opening = opening.opening;
+    response.z = target_z;
+    response.z_b = zero_opening;
+    response.z_c = zero_opening;
+
+    const Polynomial challenge =
+        lattice_lrs::proofs::BinaryChallengeFromExponent(p, 0);  // x = 1
+
+    return {std::move(key), parameters, list, first, response, challenge,
+            std::move(auxiliary)};
+}
+
+// d=86, B=1, m=1, phi2=1: p2_bound_numerator = 12*86^2*r = 88752*r.
+void test_protocol2_z_bound_scales_with_repetitions() {
+    // target_z^2 = 400^2 = 160000: above the r=1 bound (88752), below
+    // the r=2 bound (177504).
+    ZBoundFixture mid = make_z_bound_fixture(z(400));
+    require(!VerifyProtocol2Proof(mid.key, mid.parameters, mid.list, mid.first,
+                                  mid.challenge, mid.response, mid.auxiliary,
+                                  /*repetitions=*/1),
+            "a z exceeding the r=1 bound must be rejected at r=1 (confirms "
+            "the original, non-repeated bound is unchanged)");
+    require(VerifyProtocol2Proof(mid.key, mid.parameters, mid.list, mid.first,
+                                 mid.challenge, mid.response, mid.auxiliary,
+                                 /*repetitions=*/2),
+            "the same z must be accepted once repetitions=2 widens the "
+            "bound enough (confirms the bound actually scales with r)");
+
+    // target_z^2 = 600^2 = 360000: above even the r=2 bound (177504).
+    ZBoundFixture large = make_z_bound_fixture(z(600));
+    require(!VerifyProtocol2Proof(large.key, large.parameters, large.list,
+                                  large.first, large.challenge, large.response,
+                                  large.auxiliary, /*repetitions=*/2),
+            "a z exceeding even the r=2 bound must still be rejected at "
+            "r=2 (the bound widens with r, but is not unbounded)");
+
+    // target_z^2 = 88752 exactly (the r=1 boundary): must be accepted at
+    // r=1, confirming the r=1 case recovers exactly Theorem 2's original
+    // bound rather than something silently loosened.
+    ZBoundFixture boundary = make_z_bound_fixture(z(297));  // 297^2 = 88209 <= 88752
+    require(VerifyProtocol2Proof(boundary.key, boundary.parameters,
+                                 boundary.list, boundary.first,
+                                 boundary.challenge, boundary.response,
+                                 boundary.auxiliary, /*repetitions=*/1),
+            "a z within the exact r=1 Theorem 2 bound must be accepted "
+            "at r=1");
+}
+
+// Mirrors test_protocol2_zero_digit_norm_bound's all-zero-CMT technique
+// (z stays zero throughout, so only the f-bound, steps 3-4, is
+// exercised), varying beta=3 so f_zero's (beta-1) factor is nontrivial
+// and confirming it, too, scales with r.
+void test_protocol2_f_bound_scales_with_repetitions() {
+    const CommitmentKey key = make_key(3);
+    const Protocol2Parameters parameters{
+        1, 3,
+        lattice_lrs::proofs::PositiveRational(z(1), z(1)),
+        lattice_lrs::proofs::PositiveRational(z(1), z(1))};
+    const auto& p = key.parameters();
+    const Polynomial zero(p.degree, p.q);
+    const PolynomialVector zero_n(p.n, zero);
+    const PolynomialVector zero_message(p.v, zero);
+    const PolynomialVector zero_opening(p.m, zero);
+    const PolynomialVector zero_commitment =
+        lattice_lrs::commitment::Com(key, zero_message, zero_opening);
+    const Protocol2PublicList list(3, zero_commitment);
+
+    Protocol2FirstMessage first;
+    first.A = zero_n;
+    first.B = zero_n;
+    first.C = zero_n;
+    first.D = zero_n;
+    first.E = {zero_n};
+    ZeroByteSource random;
+    InsecureAuxiliaryCommitmentForTesting auxiliary;
+    const AuxiliaryCommitmentOpening opening = auxiliary.commit(
+        first.A, first.B, first.C, first.D, first.E, random);
+    first.auxiliary_commitment = opening.commitment;
+
+    // phi1_bound_numerator = 25*d*k*r = 25*86*r = 2150*r.
+    // f_{j,i} (i=1) norm^2 = 70^2 = 4900: above the r=1 bound (2150),
+    // below the r=3 bound (6450).
+    Protocol2Response response;
+    response.f_nonzero = {
+        Polynomial(p.degree, p.q, {z(70)}),
+        Polynomial(p.degree, p.q, {z(0)})};
+    response.auxiliary_opening = opening.opening;
+    response.z = zero_opening;
+    response.z_b = zero_opening;
+    response.z_c = zero_opening;
+
+    const Polynomial challenge =
+        lattice_lrs::proofs::BinaryChallengeFromExponent(p, 0);
+    require(!VerifyProtocol2Proof(key, parameters, list, first, challenge,
+                                  response, auxiliary, /*repetitions=*/1),
+            "an f_{j,i} exceeding the r=1 bound must be rejected at r=1");
+    require(VerifyProtocol2Proof(key, parameters, list, first, challenge,
+                                 response, auxiliary, /*repetitions=*/3),
+            "the same f_{j,i} must be accepted once repetitions=3 widens "
+            "the bound enough");
+}
+
+// Exercises the corrected formulas against every named production
+// parameter profile (N64/N256/N1024/N4096): a full real proof at
+// production scale is already covered (expensively) by the end-to-end
+// RSign integration test, so this instead checks the bound FORMULAS
+// themselves scale sanely for every profile's real (d, k, beta, phi1,
+// phi2, B, m, r) -- in particular that the real r-scaled bound strictly
+// exceeds what the original (r=1) bound would have been, for every
+// profile, not just the toy parameters used above.
+void test_protocol2_bounds_scale_for_all_named_profiles() {
+    using lattice_lrs::ring_signature::ParameterProfile;
+    const std::array<ParameterProfile, 4> profiles{
+        ParameterProfile::N64(), ParameterProfile::N256(),
+        ParameterProfile::N1024(), ParameterProfile::N4096()};
+
+    for (const ParameterProfile& profile : profiles) {
+        const NTL::ZZ d = z(static_cast<long>(profile.d()));
+        const NTL::ZZ k = z(static_cast<long>(profile.k()));
+        const NTL::ZZ beta = z(static_cast<long>(profile.beta()));
+        const NTL::ZZ r = z(static_cast<long>(profile.repetitions()));
+        const NTL::ZZ m = z(static_cast<long>(profile.m()));
+        const NTL::ZZ phi1 = z(static_cast<long>(profile.phi1()));
+        const NTL::ZZ phi2 = z(static_cast<long>(profile.phi2()));
+        const NTL::ZZ B = profile.B();
+
+        const NTL::ZZ phi1_bound_r1 = 25 * phi1 * phi1 * d * k;
+        const NTL::ZZ phi1_bound_rr = 25 * phi1 * phi1 * d * k * r;
+        const NTL::ZZ f_zero_bound_r1 = phi1_bound_r1 * (beta - 1);
+        const NTL::ZZ f_zero_bound_rr = phi1_bound_rr * (beta - 1);
+        const NTL::ZZ p2_bound_r1 =
+            12 * phi2 * phi2 * B * B * m * m * d * d;
+        const NTL::ZZ p2_bound_rr =
+            12 * phi2 * phi2 * B * B * m * m * d * d * r;
+
+        require(r >= 1, "every named profile must have at least one repetition");
+        require(phi1_bound_rr >= phi1_bound_r1,
+                "the r-scaled f_{j,i} bound must never be smaller than the "
+                "r=1 bound for a real profile");
+        require(f_zero_bound_rr >= f_zero_bound_r1,
+                "the r-scaled f_{j,0} bound must never be smaller than the "
+                "r=1 bound for a real profile");
+        require(p2_bound_rr >= p2_bound_r1,
+                "the r-scaled z/z_b/z_c bound must never be smaller than "
+                "the r=1 bound for a real profile");
+        require(r > 1 ? phi1_bound_rr > phi1_bound_r1 : phi1_bound_rr == phi1_bound_r1,
+                "the f_{j,i} bound must strictly widen for r>1 and be "
+                "exactly unchanged for r==1");
+        require(r > 1 ? p2_bound_rr > p2_bound_r1 : p2_bound_rr == p2_bound_r1,
+                "the z/z_b/z_c bound must strictly widen for r>1 and be "
+                "exactly unchanged for r==1");
+    }
 }
 
 void test_hand_calculated_protocol2_list_equation_and_ordering() {
@@ -495,6 +773,10 @@ int main() {
     try {
         test_round_trip_and_protocol2_widths();
         test_protocol2_zero_digit_norm_bound();
+        test_protocol2_f_zero_bound_is_linear_not_squared_in_beta_minus_one();
+        test_protocol2_z_bound_scales_with_repetitions();
+        test_protocol2_f_bound_scales_with_repetitions();
+        test_protocol2_bounds_scale_for_all_named_profiles();
         test_hand_calculated_protocol2_list_equation_and_ordering();
         test_challenge_response_commitment_and_opening_failures();
         test_response_bounds_and_malformed_dimensions();

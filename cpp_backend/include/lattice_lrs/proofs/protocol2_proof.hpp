@@ -254,6 +254,12 @@ std::optional<Protocol2Response> RespondProtocol2Proof(
     sampling::RandomSource& random,
     BernoulliExponentialProvider& exponential);
 
+// `repetitions` is Section 6's r (the number of parallel, r-repeated
+// Protocol 2 runs the r-aware norm bounds below are tuned against).
+// Defaults to 1, recovering Theorem 2's original, unmodified Protocol 2
+// per-run bounds exactly, so every pre-existing non-repeated Protocol 2
+// call site is unaffected; ring_signature.cpp's RVerify passes the real
+// r for RSign-produced signatures.
 bool VerifyProtocol2Proof(
     const commitment::CommitmentKey& key,
     const Protocol2Parameters& parameters,
@@ -261,6 +267,7 @@ bool VerifyProtocol2Proof(
     const Protocol2FirstMessage& first_message,
     const arithmetic::Polynomial& challenge,
     const Protocol2Response& response,
-    const Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment);
+    const Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
+    std::size_t repetitions = 1);
 
 }  // namespace lattice_lrs::proofs

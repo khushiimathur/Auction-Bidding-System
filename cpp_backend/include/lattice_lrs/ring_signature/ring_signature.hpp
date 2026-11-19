@@ -124,7 +124,19 @@ struct RSignBatchRejectionParameters {
     std::size_t m;
     std::size_t d;
     NTL::ZZ B;
+    // Section 6, "Tweaks for r-repeated protocol": the global/batch
+    // rejection reuses Algorithm 1's Rej(z,c,phi,K) exactly, with phi1 for
+    // the f-vector stage and phi2 for the (z,z_b,z_c) response stage (the
+    // paper's own text: "we apply THE rejection sampling [i.e. Algorithm 1,
+    // unchanged] to r-concatenated vectors at once"). This field carries
+    // that phi through to the batch rejection provider.
+    proofs::PositiveRational phi;
     NTL::ZZ K_squared;
+    // Retained for existing callers/tests that inspect these fields
+    // (e.g. tests/test_rsign_batch.cpp's ScriptedRejection); the corrected
+    // Section6BatchRejectionProvider (production_rejection_provider.hpp)
+    // does NOT use them -- see that file for why the "144" constants these
+    // carry are not trusted as the rejection target.
     NTL::ZZ target_s_squared_numerator;
     NTL::ZZ target_s_squared_denominator;
 };

@@ -371,6 +371,7 @@ static RSignSignature r_sign_impl(
             p.m,
             p.degree,
             p.B,
+            proof_parameters.phi1,
             k_squared_f,
             target_f_squared,
             NTL::ZZ(1)};
@@ -411,6 +412,7 @@ static RSignSignature r_sign_impl(
             p.m,
             p.degree,
             p.B,
+            proof_parameters.phi2,
             k_squared_z,
             target_z_squared,
             NTL::ZZ(1)};
@@ -497,7 +499,7 @@ static bool r_verify_impl(
         if (!proofs::VerifyProtocol2Proof(
                 key, proof_parameters, ring, signature.first_messages[run],
                 signature.challenges[run], signature.responses[run],
-                auxiliary_commitment)) {
+                auxiliary_commitment, repetitions)) {
             return false;
         }
     }

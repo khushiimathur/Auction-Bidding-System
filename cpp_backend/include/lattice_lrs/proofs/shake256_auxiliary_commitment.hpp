@@ -13,6 +13,9 @@ class Shake256AuxiliaryCommitmentProvider final
     : public AuxiliaryCommitmentProvider,
       public Protocol2AuxiliaryCommitmentProvider {
 public:
+    // Experimental c_a/d_a implementation: c_a is the 32-byte digest and
+    // d_a is the 32-byte uniformly random opening. Hiding/binding are
+    // conditional assumptions, not a paper security proof.
     static constexpr std::size_t kOpeningSize = 32;
     static constexpr std::size_t kDigestSize = 32;
 

@@ -255,15 +255,37 @@ std::vector<arithmetic::Polynomial> reconstruct_f(
 bool verify_norms(const commitment::Parameters& p,
                   const Protocol2Parameters& proof,
                   const std::vector<arithmetic::Polynomial>& f,
-                  const Protocol2Response& response) {
+                  const Protocol2Response& response,
+                  std::size_t repetitions) {
+    // Section 6's "tweaks for r-repeated protocol" widen the rejection
+    // sampling applied to the r-concatenated (f, z, z_b, z_c) vectors:
+    // f_{j,i} (i != 0) is sampled from D^d_{phi1*sqrt(k*r)} and z/z_b/z_c
+    // from D^{md}_{phi2*B*sqrt(3*m*d*r)} -- both scaled by r relative to
+    // Theorem 2's non-repeated (r=1) Protocol 2 bounds (Table 4, Appendix
+    // D of Esgin et al. 2018/773, cross-referencing and correcting a
+    // typesetting erratum in Section 6's main text). RVerify's per-run
+    // verification (this function, called once per repetition) must
+    // therefore check each run's values against the SAME r-scaled bound
+    // the signer actually sampled from, not the original r=1 bound: the
+    // squared-norm thresholds below carry an explicit `repetitions`
+    // (== r) factor for exactly this reason. Passing repetitions=1
+    // recovers Theorem 2's original, unmodified Protocol 2 bounds
+    // exactly, so every existing non-repeated Protocol 2 call site is
+    // unaffected.
+    const NTL::ZZ r = zz(repetitions);
     const NTL::ZZ phi1_bound_numerator =
         25 * proof.phi1.numerator * proof.phi1.numerator *
-        zz(p.degree) * zz(proof.k);
+        zz(p.degree) * zz(proof.k) * r;
     const NTL::ZZ phi1_bound_denominator =
         proof.phi1.denominator * proof.phi1.denominator;
+    // Theorem 2 / Protocol 2 Step 4: ||f_{j,0}|| <= 5*phi1*sqrt(d*k*(beta-1))
+    // (and, for the r-repeated case, d*k*r*(beta-1)) -- LINEAR in
+    // (beta-1), not squared. (Previously this multiplied by
+    // beta_minus_one twice, i.e. (beta-1)^2; compare the boxed Step 4
+    // bound and its restatement in the Lemma proof, both of which have a
+    // single, unsquared (beta-1) inside the square root.)
     const NTL::ZZ beta_minus_one = zz(proof.beta - 1);
-    const NTL::ZZ f_zero_bound =
-        phi1_bound_numerator * beta_minus_one * beta_minus_one;
+    const NTL::ZZ f_zero_bound = phi1_bound_numerator * beta_minus_one;
     for (std::size_t row = 0; row < proof.k; ++row) {
         if (!within_squared_bound(norm_squared(f[row * proof.beta]),
                                   f_zero_bound, phi1_bound_denominator)) {
@@ -280,7 +302,7 @@ bool verify_norms(const commitment::Parameters& p,
 
     const NTL::ZZ p2_bound_numerator =
         12 * proof.phi2.numerator * proof.phi2.numerator *
-        p.B * p.B * zz(p.m) * zz(p.m) * zz(p.degree) * zz(p.degree);
+        p.B * p.B * zz(p.m) * zz(p.m) * zz(p.degree) * zz(p.degree) * r;
     const NTL::ZZ p2_bound_denominator =
         proof.phi2.denominator * proof.phi2.denominator;
     return within_squared_bound(norm_squared(response.z), p2_bound_numerator,
@@ -719,7 +741,8 @@ bool VerifyProtocol2Proof(
     const Protocol2FirstMessage& first,
     const arithmetic::Polynomial& challenge,
     const Protocol2Response& response,
-    const Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment) {
+    const Protocol2AuxiliaryCommitmentProvider& auxiliary_commitment,
+    std::size_t repetitions) {
     try {
         proof.validate(key);
     } catch (const std::exception&) {
@@ -767,7 +790,7 @@ bool VerifyProtocol2Proof(
 
     const std::vector<arithmetic::Polynomial> f =
         reconstruct_f(proof, challenge, response.f_nonzero);
-    if (!verify_norms(p, proof, f, response)) return false;
+    if (!verify_norms(p, proof, f, response, repetitions)) return false;
 
     PolynomialVector f_message;
     PolynomialVector g_message;

@@ -165,7 +165,14 @@ NTL::ZZ ParameterProfile::T1_squared() const {
     const NTL::ZZ second =
         12 * integer_power(phi2, 2) * integer_power(B_, 2) *
         integer_power(m, 2) * integer_power(d, 2) * r;
-    return (2 * d + 2) * (first + second);
+    // Theorem 1 / Section 6: T1 = (2d+2) * sqrt(first+second), so
+    // T1^2 = (2d+2)^2 * (first+second) -- the scale factor must be
+    // squared along with the bracket. (Previously this returned only
+    // (2*d+2)*(first+second), a single, unsquared factor of (2d+2); see
+    // proofs::commitment_binding_bound_squared in binary_proof.cpp, which
+    // already computes the same scale correctly as scale*scale*(...).)
+    const NTL::ZZ scale = 2 * d + 2;
+    return scale * scale * (first + second);
 }
 
 NTL::ZZ ParameterProfile::T1_upper_bound() const {

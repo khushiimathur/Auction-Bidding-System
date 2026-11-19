@@ -29,6 +29,32 @@ target_include_directories(lattice_lrs_fips202 PRIVATE
     "${DILITHIUM_ROUND3_REF_DIR}")
 target_compile_features(lattice_lrs_fips202 PRIVATE c_std_99)
 
+# Dilithium5 (NIST Round 3 submission, DILITHIUM_MODE=5) one-time-signature
+# backend for the WCM linkable ring signature OTS wrapper
+# (lattice_lrs/ots/dilithium_ots.hpp). fips202.c is deliberately NOT
+# recompiled here: it is already built into lattice_lrs_fips202 above, and
+# compiling the same global FIPS-202 symbols (shake256, sha3_256, ...) into
+# two static libraries linked into the same binary is a duplicate-symbol
+# hazard. This mirrors the configuration already validated by the
+# LATTICE_LRS_BUILD_DILITHIUM_TESTS experiment in the top-level
+# CMakeLists.txt.
+add_library(lattice_lrs_dilithium STATIC
+    "${DILITHIUM_ROUND3_REF_DIR}/sign.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/packing.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/polyvec.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/poly.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/ntt.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/reduce.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/rounding.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/symmetric-shake.c"
+    "${DILITHIUM_ROUND3_REF_DIR}/randombytes.c"
+)
+target_include_directories(lattice_lrs_dilithium PUBLIC
+    "${DILITHIUM_ROUND3_REF_DIR}")
+target_link_libraries(lattice_lrs_dilithium PUBLIC lattice_lrs_fips202)
+target_compile_definitions(lattice_lrs_dilithium PUBLIC DILITHIUM_MODE=5)
+target_compile_features(lattice_lrs_dilithium PUBLIC c_std_99)
+
 add_library(GMP::GMP UNKNOWN IMPORTED)
 set_target_properties(GMP::GMP PROPERTIES
     IMPORTED_LOCATION "${GMP_LIBRARY}"
@@ -54,6 +80,7 @@ add_library(lattice_lrs_backend STATIC
     src/proofs/discrete_gaussian.cpp
     src/proofs/discrete_gaussian_s.cpp
     src/proofs/shake256_auxiliary_commitment.cpp
+    src/ring_signature/canonical_rsign_transcript.cpp
     src/proofs/protocol2_commitment.cpp
     src/proofs/protocol2_polynomial.cpp
     src/proofs/protocol2_proof.cpp
@@ -62,13 +89,26 @@ add_library(lattice_lrs_backend STATIC
     src/proofs/protocol2_response_lift.cpp
     src/ring_signature/parameter_profile.cpp
     src/ring_signature/ring_signature.cpp
+    src/ring_signature/production_rejection_provider.cpp
+    src/ring_signature/production_rsign.cpp
+    src/proofs/production_gaussian_provider.cpp
+    src/ots/dilithium_ots.cpp
+    src/lrs/public_key_mask.cpp
+    src/lrs/linkable_ring_signature.cpp
+    src/lrs/link.cpp
+    src/lrs/production_lrsign.cpp
+    src/demo/demo_parameters.cpp
+    src/demo/playground_session.cpp
+    src/auction/sealed_bid_auction.cpp
+    src/lpcom/lpcom.cpp
 )
 target_include_directories(lattice_lrs_backend PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_include_directories(lattice_lrs_backend PRIVATE
     "${DILITHIUM_ROUND3_REF_DIR}")
-target_link_libraries(lattice_lrs_backend PUBLIC NTL::NTL lattice_lrs_fips202)
+target_link_libraries(lattice_lrs_backend PUBLIC NTL::NTL lattice_lrs_fips202
+    lattice_lrs_dilithium)
 target_compile_features(lattice_lrs_backend PUBLIC cxx_std_17)
 if(APPLE)
     target_link_libraries(lattice_lrs_backend PUBLIC "-framework Security")
