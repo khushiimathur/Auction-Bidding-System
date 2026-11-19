@@ -1,0 +1,26 @@
+@"
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# CMake and generated builds
+**/out/
+**/build/
+**/cmake-build-*/
+
+# Compiled files
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.pdb
+
+# IDE
+.vscode/
+"@ | Set-Content .gitignore
