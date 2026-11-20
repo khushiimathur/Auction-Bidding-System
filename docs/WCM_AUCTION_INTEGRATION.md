@@ -194,6 +194,57 @@ printf 'CREATE demo1\nBID demo1 0 150\nBID demo1 0 999\nLIST demo1\n' \
   | ./build/python_demo/lrs_auction_cli
 ```
 
+## 5a. LPCom bid-amount commitment and the Streamlit demo
+
+The Live Auction page's bid flow now actually runs:
+
+```
+BID auction_id bidder_index amount
+    -> lpcom::Com(amount) -> (commitment c, opening (v, r))
+    -> message = "PQ-LRS/Auction/v2-LPCom" || auction_id || c
+    -> LRSignForTesting(message) -> LRVerifyForTesting(message)
+    -> LinkForTesting against prior accepted submissions
+    -> accept/reject
+```
+
+`lrs_auction_cli` exposes two settlement-stage commands used by the new
+"Settlement & Bid Verification" section of the Live Auction page:
+
+- `OPEN_BID <auction_id> <submission_index>` — reveals the real stored
+  opening for the `submission_index`-th **accepted** submission (indexed
+  in acceptance order, not the full public-log order) and independently
+  re-verifies it via `lpcom::Unv`.
+- `VERIFY_BID_AMOUNT <auction_id> <submission_index> <claimed_amount>` —
+  checks a caller-supplied claimed amount against that submission's real
+  stored commitment and real stored randomness. A correct amount returns
+  `verified: true`; an incorrect one (in range) returns `verified: false`;
+  an out-of-range claim surfaces as a backend error, shown to the user as
+  rejected either way.
+
+`SubmissionPublicView` gained `lpcom_commitment_hex` (the real commitment
+vector, hex-encoded) alongside the pre-existing `bid_commitment_hex`
+(now a short hash of that commitment, kept for backward compatibility).
+Neither the opening randomness `r` nor the plaintext amount is ever
+placed in `SubmissionPublicView`, `PublicLog()`, or any CLI response
+other than `OPEN_BID`/`VERIFY_BID_AMOUNT`'s own result.
+
+**Important limitation, stated plainly in the UI itself:** in this demo
+the bid amount is sent to the backend process as plain text, which then
+computes the LPCom commitment on the bidder's behalf (the same
+centralized-secret-key simplification used throughout this demo). LPCom
+hides the bid from anyone who only sees the public log, the signature,
+or the commitment — it does **not** hide the bid from this particular
+backend process, which sees the plaintext amount before committing to
+it. A real deployment would have each bidder compute their own
+commitment locally, before anything reaches the auctioneer.
+
+LPCom's own parameters used here (`n=1, k=16, m=24, q=257, sigma^2=1024,
+B=157`) are an explicitly experimental, non-security-validated profile —
+see `cpp_backend/include/lattice_lrs/lpcom/lpcom.hpp` and the
+Parameters/Limitations tabs of the Streamlit app's Technical Details
+page. They are unrelated to, and not validated the same way as, Esgin's
+named `N64` profile.
+
 ## 6. Known limitations and cryptographic assumptions
 
 Everything inherited from the base RSign/RVerify integration still applies

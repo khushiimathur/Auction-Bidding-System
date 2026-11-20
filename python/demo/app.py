@@ -802,6 +802,14 @@ elif page == "Live Auction":
                 st.table([{"ring_index": i, "fingerprint": fp} for i, fp in enumerate(ring_fingerprints)])
 
         st.markdown("#### Submit an Anonymous Bid")
+        st.caption(
+            "What actually happens on submit: (1) the backend generates an "
+            "**LPCom commitment** to your bid amount, (2) your linkable ring "
+            "signature signs that commitment together with this auction's "
+            "id, (3) the backend runs **LRVerify** on that signature, (4) "
+            "**Link** checks it against every prior accepted submission in "
+            "this auction, (5) the bid is accepted or rejected."
+        )
         step_cols = st.columns(3)
         with step_cols[0]:
             bidder_index = st.selectbox("1. Eligible participant", options=list(range(8)), key="bid_bidder_select")
@@ -814,17 +822,33 @@ elif page == "Live Auction":
 
         if submit_clicked:
             progress = st.empty()
-            progress.markdown(badge("Generating linkable ring signature...", "neutral"), unsafe_allow_html=True)
+            progress.markdown(badge("Generating LPCom commitment and linkable ring signature...", "neutral"), unsafe_allow_html=True)
             try:
                 response = send_command("BID", active_auction_id, bidder_index, bid_amount)
-                progress.markdown(badge("Verifying signature...", "neutral"), unsafe_allow_html=True)
+                progress.markdown(badge("Verifying signature (LRVerify)...", "neutral"), unsafe_allow_html=True)
                 if response.get("ok"):
                     submission = response["submission"]
                     progress.markdown(badge("Checking previous submissions via Link...", "neutral"), unsafe_allow_html=True)
                     progress.empty()
                     if submission["accepted"]:
                         st.success("BID ACCEPTED")
-                        st.caption("Signature verified · Anonymous submission recorded · No bidder identity revealed.")
+                        st.caption(
+                            "LPCom commitment generated · signature verified · "
+                            "no duplicate detected via Link · anonymous "
+                            "submission recorded."
+                        )
+                        st.markdown(
+                            f'<div class="pq-card"><h4>LPCom commitment (public)</h4>'
+                            f'<p class="pq-mono" style="word-break:break-all;">{submission["lpcom_commitment_hex"]}</p>'
+                            f'<p style="margin-top:8px;">Auction: <code>{active_auction_id}</code></p>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(
+                            "The ring signature above covers THIS commitment vector, "
+                            "not the plaintext bid amount — a verifier only ever "
+                            "sees the commitment, never the amount, until settlement."
+                        )
                     else:
                         st.error("SUBMISSION REJECTED")
                         if "duplicate" in submission["reason"]:
@@ -833,6 +857,8 @@ elif page == "Live Auction":
                                 "but Link detected a previous submission from the same "
                                 "signer. Another bid from this signer is not permitted in this auction."
                             )
+                        elif "signature failed verification" in submission["reason"]:
+                            st.caption("INVALID SIGNATURE — LRVerify rejected this submission.")
                         else:
                             st.caption(submission["reason"])
                 else:
@@ -841,6 +867,19 @@ elif page == "Live Auction":
             except SERVER_EXCEPTIONS as error:
                 progress.empty()
                 st.error(f"Backend error: {error_detail(error)}")
+
+        st.info(
+            "**Honesty note:** in this demo, the bid amount is sent to the "
+            "backend process as plain text, which then computes the LPCom "
+            "commitment on the bidder's behalf (the same centralized-key "
+            "simplification used throughout this demo — see Technical "
+            "Details). LPCom hides the bid from anyone who only sees the "
+            "public log or the signed commitment; it does **not** hide the "
+            "bid from this particular backend process, which sees the "
+            "plaintext amount before committing to it. A real deployment "
+            "would have each bidder compute their own commitment locally, "
+            "before it ever reaches the auctioneer."
+        )
 
         st.markdown("#### Public Submission History")
         st.caption(
@@ -855,12 +894,19 @@ elif page == "Live Auction":
             submissions = []
             st.error(f"Backend error: {error_detail(error)}")
 
+        accepted_settlement_index = {}
+        running_index = 0
+        for s in submissions:
+            if s["accepted"]:
+                accepted_settlement_index[id(s)] = running_index
+                running_index += 1
+
         if submissions:
             rows = [
                 {
                     "status": "ACCEPTED" if s["accepted"] else "REJECTED",
                     "ovk_fingerprint": s["ovk_fingerprint"],
-                    "bid_commitment": s["bid_commitment_hex"],
+                    "lpcom_commitment_hex": s.get("lpcom_commitment_hex", ""),
                     "reason": s["reason"],
                 }
                 for s in submissions
@@ -882,6 +928,110 @@ elif page == "Live Auction":
                 "Each auction maintains its own linkability history. A submission "
                 "in one auction never prevents participation in another."
             )
+
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("#### How a bid flows through the system")
+        flow_steps = [
+            "Bid Amount", "LPCom Commitment", "WCM Linkable Signature",
+            "Signature Verification", "Duplicate Detection (Link)",
+            "Accepted Commitment", "Settlement Reveal",
+        ]
+        flow_html = '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0;">'
+        for i, step in enumerate(flow_steps):
+            flow_html += (
+                f'<div class="pq-card" style="flex:1; min-width:120px; padding:10px 12px; text-align:center;">'
+                f'<p style="color:{PALETTE["text"]}; font-size:12px; font-weight:600; margin:0;">{step}</p></div>'
+            )
+            if i != len(flow_steps) - 1:
+                flow_html += f'<div style="font-size:16px; color:{PALETTE["text_dim"]};">→</div>'
+        flow_html += "</div>"
+        st.markdown(flow_html, unsafe_allow_html=True)
+        st.caption(
+            "LPCom hides the committed message under its own stated (and "
+            "explicitly experimental, non-security-validated) assumptions — see "
+            "Technical Details. Esgin's ring signature provides anonymity "
+            "within the ring; WCM's Link adds the duplicate-submission check "
+            "on top; settlement is the only stage where the commitment is "
+            "opened, and only inside this section, never in the public log above."
+        )
+
+        # ------------------------------------------------------------------
+        # Settlement & Bid Verification
+        # ------------------------------------------------------------------
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("### Settlement & Bid Verification")
+        st.caption(
+            "A separate, later stage: opening a commitment to check it against "
+            "the bid amount actually recorded. This is never run during bidding, "
+            "and the opening randomness is never written into the public log above."
+        )
+
+        accepted_options = [
+            (accepted_settlement_index[id(s)], s["ovk_fingerprint"])
+            for s in submissions if s["accepted"]
+        ]
+        if not accepted_options:
+            st.caption("No accepted submissions in this auction yet.")
+        else:
+            settle_col1, settle_col2 = st.columns(2)
+            with settle_col1:
+                st.markdown("##### Reveal & verify the real opening")
+                chosen = st.selectbox(
+                    "Accepted submission (by one-time key tag)",
+                    options=accepted_options,
+                    format_func=lambda pair: f"#{pair[0]} — ovk {pair[1]}",
+                    key="settlement_reveal_select",
+                )
+                if st.button("Reveal opening and run Unv", key="settlement_reveal_btn"):
+                    try:
+                        reveal_response = send_command(
+                            "OPEN_BID", active_auction_id, chosen[0])
+                        if reveal_response.get("ok"):
+                            if reveal_response["verified"]:
+                                st.markdown(badge("OPENING VALID", "good"), unsafe_allow_html=True)
+                            else:
+                                st.markdown(badge("OPENING INVALID", "bad"), unsafe_allow_html=True)
+                            st.markdown(f"**Revealed bid amount:** `{reveal_response['amount']}`")
+                            st.caption(
+                                "This amount is shown ONLY in this settlement "
+                                "view, computed from the real stored opening — "
+                                "never from the public submission log."
+                            )
+                        else:
+                            st.error(f"Reveal failed: {reveal_response.get('error')}")
+                    except SERVER_EXCEPTIONS as error:
+                        st.error(f"Backend error: {error_detail(error)}")
+
+            with settle_col2:
+                st.markdown("##### Test a claimed amount")
+                st.caption(
+                    "Checks a CLAIMED amount against the real stored commitment "
+                    "and the real stored randomness — a genuine lpcom::Unv call, "
+                    "not a simulated comparison."
+                )
+                claim_target = st.selectbox(
+                    "Accepted submission",
+                    options=accepted_options,
+                    format_func=lambda pair: f"#{pair[0]} — ovk {pair[1]}",
+                    key="settlement_claim_select",
+                )
+                claimed_amount = st.text_input(
+                    "Claimed bid amount", value="100", key="settlement_claim_amount")
+                if st.button("Verify claimed amount", key="settlement_claim_btn"):
+                    try:
+                        claim_response = send_command(
+                            "VERIFY_BID_AMOUNT", active_auction_id, claim_target[0],
+                            claimed_amount)
+                        if claim_response.get("ok"):
+                            if claim_response["verified"]:
+                                st.markdown(badge("ACCEPTED — claimed amount matches", "good"), unsafe_allow_html=True)
+                            else:
+                                st.markdown(badge("REJECTED — claimed amount does not match", "bad"), unsafe_allow_html=True)
+                        else:
+                            st.markdown(badge("REJECTED — claimed amount does not match", "bad"), unsafe_allow_html=True)
+                            st.caption(f"Backend detail: {claim_response.get('error')}")
+                    except SERVER_EXCEPTIONS as error:
+                        st.error(f"Backend error: {error_detail(error)}")
 
 
 # ==========================================================================
@@ -922,6 +1072,31 @@ elif page == "Technical Details":
                 {"Parameter": "λ", "Value": "128"},
             ])
             st.caption("Real signing/verification at this scale takes a few minutes, which is why the interactive pages above use the demo-scale parameters instead.")
+
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("**LPCom bid-amount commitment — experimental parameters**")
+        st.caption(
+            "Used by the Live Auction page to commit to each bid amount "
+            "(Cabarcas, Demirel, Göpfert, Lancrenon, Wunderer — ePrint "
+            "2015/628 — Figure 1)."
+        )
+        st.table([
+            {"Parameter": "n (message rank)", "Value": "1"},
+            {"Parameter": "k (randomness rank)", "Value": "16"},
+            {"Parameter": "m (rows)", "Value": "24"},
+            {"Parameter": "q (modulus, prime)", "Value": "257"},
+            {"Parameter": "σ² (exact)", "Value": "1024"},
+            {"Parameter": "B (norm bound)", "Value": "157"},
+        ])
+        st.warning(
+            "This profile is loosely shaped after the paper's own Figure 2 "
+            "asymptotic instantiation, scaled down for a fast demo. It is "
+            "**not** a security-validated parameter set — the paper itself "
+            "does not claim Figure 2 is concretely optimized either. No "
+            "post-quantum security level is claimed for this profile. It is "
+            "entirely separate from, and not validated the same way as, "
+            "Esgin's named N64 profile above."
+        )
 
     with tabs[1]:
         st.markdown(
@@ -1030,5 +1205,13 @@ elif page == "Technical Details":
             "- This demo centralizes every simulated bidder's secret key in one process so "
             "one operator can submit as any of them; a real deployment never would.\n"
             "- A successful verification establishes internal self-consistency of this "
-            "pipeline, not a formal security proof of anonymity or unforgeability."
+            "pipeline, not a formal security proof of anonymity or unforgeability.\n"
+            "- **LPCom's experimental parameters are not security-validated** (see "
+            "Parameters tab) — no post-quantum security level is claimed.\n"
+            "- **LPCom does not hide the bid from this demo's own backend process.** "
+            "The bid amount is sent to the backend as plain text, which computes the "
+            "commitment on the bidder's behalf. It hides the bid from anyone who only "
+            "sees the public log, the signature, or the commitment — not from the "
+            "process that generated the commitment. A real deployment would have each "
+            "bidder commit locally before anything reaches the auctioneer."
         )

@@ -10,6 +10,11 @@
 // per line on stdout (flushed immediately). Commands:
 //   CREATE <auction_id>
 //   BID <auction_id> <bidder_index> <amount>
+//   OPEN_BID <auction_id> <submission_index>  (settlement-stage LPCom
+//       reveal + verify; submission_index is in ACCEPTANCE order)
+//   VERIFY_BID_AMOUNT <auction_id> <submission_index> <claimed_amount>
+//       (settlement-stage: verify a CLAIMED amount, real stored
+//       randomness, against the real stored commitment)
 //   LIST <auction_id>
 //   RING <auction_id>
 //   AUCTIONS
@@ -65,7 +70,9 @@ void write_submission_json(std::ostream& output,
                            const SubmissionPublicView& view) {
     output << "{\"ovk_fingerprint\":\"" << json_escape(view.ovk_fingerprint)
            << "\",\"bid_commitment_hex\":\""
-           << json_escape(view.bid_commitment_hex) << "\",\"accepted\":"
+           << json_escape(view.bid_commitment_hex)
+           << "\",\"lpcom_commitment_hex\":\""
+           << json_escape(view.lpcom_commitment_hex) << "\",\"accepted\":"
            << (view.accepted ? "true" : "false") << ",\"reason\":\""
            << json_escape(view.reason) << "\"}";
 }
@@ -154,6 +161,87 @@ int main() {
                 std::cout << "}" << std::endl;
             } catch (const std::exception& error) {
                 write_error(std::string("bid submission failed: ") +
+                           error.what());
+            }
+            continue;
+        }
+
+        if (command == "OPEN_BID") {
+            // SETTLEMENT-STAGE ONLY: reveals the LPCom opening (bid
+            // amount + commitment randomness) for one ACCEPTED
+            // submission (indexed in acceptance order, i.e. among
+            // submissions with accepted=true in LIST's order -- not
+            // the same index as a position in LIST's full array, which
+            // also contains rejected entries) and independently
+            // verifies it against that submission's stored commitment
+            // via lpcom::Unv. This never appears during bidding; a real
+            // deployment would only expose it once settlement begins.
+            std::string auction_id;
+            std::size_t submission_index = 0;
+            tokens >> auction_id >> submission_index;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            try {
+                const lpcom::Opening opening =
+                    iterator->second.RevealOpening(submission_index);
+                const bool verified =
+                    iterator->second.VerifyOpening(submission_index, opening);
+                std::cout << "{\"ok\":true,\"submission_index\":"
+                          << submission_index << ",\"amount\":"
+                          << opening.v[0] << ",\"verified\":"
+                          << (verified ? "true" : "false") << "}"
+                          << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("opening failed: ") + error.what());
+            }
+            continue;
+        }
+
+        if (command == "VERIFY_BID_AMOUNT") {
+            // SETTLEMENT-STAGE ONLY: lets a caller test a CLAIMED bid
+            // amount against submission_index's real stored commitment,
+            // using the real stored randomness r (this demo's
+            // centralized-key model already holds r -- a real bidder
+            // would supply it themselves at reveal time). This is
+            // lpcom::Unv against a genuine commitment and a genuinely
+            // possibly-wrong message, not a simulation: a correct
+            // claimed_amount returns verified=true, any other value
+            // returns verified=false.
+            std::string auction_id;
+            std::size_t submission_index = 0;
+            std::string claimed_amount;
+            tokens >> auction_id >> submission_index >> claimed_amount;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            if (claimed_amount.empty() ||
+                claimed_amount.find_first_not_of("0123456789") !=
+                    std::string::npos) {
+                write_error(
+                    "claimed_amount must be a non-negative decimal integer");
+                continue;
+            }
+            try {
+                lpcom::Opening opening =
+                    iterator->second.RevealOpening(submission_index);
+                std::istringstream amount_stream(claimed_amount);
+                NTL::ZZ claimed_zz;
+                amount_stream >> claimed_zz;
+                opening.v[0] = claimed_zz;
+                const bool verified =
+                    iterator->second.VerifyOpening(submission_index, opening);
+                std::cout << "{\"ok\":true,\"submission_index\":"
+                          << submission_index << ",\"claimed_amount\":\""
+                          << json_escape(claimed_amount) << "\",\"verified\":"
+                          << (verified ? "true" : "false") << "}"
+                          << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("verification failed: ") +
                            error.what());
             }
             continue;

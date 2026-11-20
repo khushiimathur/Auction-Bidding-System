@@ -49,7 +49,7 @@ void test_duplicate_submission_from_same_bidder_is_rejected() {
     require(first.accepted, "the first submission must be accepted");
 
     const SubmissionPublicView second =
-        auction.SubmitBid(2, amount_bytes(999), random);
+        auction.SubmitBid(2, amount_bytes(200), random);
     require(!second.accepted,
             "a second submission from the SAME ring member must be "
             "rejected as a duplicate, even with a different bid amount "
@@ -95,9 +95,9 @@ void test_same_bidder_different_auctions_both_accepted() {
     SealedBidAuction auction_2 = SealedBidAuction::Create("auction-D2", random);
 
     const SubmissionPublicView first =
-        auction_1.SubmitBid(4, amount_bytes(500), random);
+        auction_1.SubmitBid(4, amount_bytes(150), random);
     const SubmissionPublicView second =
-        auction_2.SubmitBid(4, amount_bytes(500), random);
+        auction_2.SubmitBid(4, amount_bytes(150), random);
 
     require(first.accepted, "the first auction's submission must be accepted");
     require(second.accepted,
@@ -124,11 +124,11 @@ void test_invalid_bidder_index_is_rejected_before_any_duplicate_check() {
 void test_public_log_never_reveals_amount_or_bidder_index() {
     SystemRandomSource random;
     SealedBidAuction auction = SealedBidAuction::Create("auction-F", random);
-    (void)auction.SubmitBid(5, amount_bytes(123456789), random);
+    (void)auction.SubmitBid(5, amount_bytes(123), random);
 
     const auto& log = auction.PublicLog();
     require(log.size() == 1, "one submission must appear in the public log");
-    const std::string amount_text = "123456789";
+    const std::string amount_text = "123";
     require(log[0].bid_commitment_hex.find(amount_text) == std::string::npos,
             "the public log's bid commitment must be a hash, not the "
             "plaintext amount");

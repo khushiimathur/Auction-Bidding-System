@@ -37,9 +37,23 @@ Parameters SmallTestParameters(sampling::RandomSource& random) {
                          /*B=*/NTL::to_ZZ(10), random);
 }
 
+// IMPORTANT (see discrete_gaussian_s.hpp / production_gaussian_provider.hpp):
+// ExactDiscreteGaussianSProvider's running time degrades sharply -- from
+// sub-millisecond to tens of seconds per sample -- when its
+// proposal_center is small relative to sqrt(s_squared). GaussianBundle's
+// proposal_center (3) matches SmallTestParameters' sigma = 3 and must
+// NOT be reused for a profile with a different sigma (e.g. the
+// experimental demo profile's sigma = 32, which needs its own bundle
+// below with a matching proposal_center).
 struct GaussianBundle {
     proofs::ExactBernoulliPiExponentialProvider exponential;
     proofs::ExactDiscreteGaussianSProvider sampler{exponential, NTL::to_ZZ(3),
+                                                   NTL::to_ZZ(1)};
+};
+
+struct LargeScaleGaussianBundle {
+    proofs::ExactBernoulliPiExponentialProvider exponential;
+    proofs::ExactDiscreteGaussianSProvider sampler{exponential, NTL::to_ZZ(32),
                                                    NTL::to_ZZ(1)};
 };
 
@@ -125,13 +139,19 @@ void test_modified_commitment_is_rejected() {
     Vector v{NTL::to_ZZ(5), NTL::to_ZZ(17)};
     ComResult result = lpcom::Com(params, v, gaussian.sampler, random);
 
+    // A shift of half the modulus guarantees the recovered error
+    // coordinate moves far outside the acceptance bound B (a shift of
+    // just 1 could legitimately still fall within B's slack, since B
+    // must tolerate the real spread of Gaussian error samples -- this
+    // is not a meaningful binding attack, just an assertion that would
+    // be flaky at tiny demo parameters).
     Commitment tampered = result.commitment;
-    tampered.c[0] = (tampered.c[0] + 1) % params.q;
+    tampered.c[0] = (tampered.c[0] + params.q / 2) % params.q;
     const bool accepted =
         lpcom::Unv(params, tampered, result.opening.v, result.opening.r);
     require(!accepted,
-           "opening a commitment that was modified after the fact must be "
-           "rejected");
+           "opening a commitment that was modified after the fact by a "
+           "large shift must be rejected");
 }
 
 void test_message_outside_range_is_rejected() {
@@ -166,7 +186,7 @@ void test_wrong_dimension_message_is_rejected() {
 
 void test_experimental_demo_parameters_round_trip() {
     sampling::SystemRandomSource random;
-    GaussianBundle gaussian;
+    LargeScaleGaussianBundle gaussian;
     Parameters params = lpcom::ExperimentalDemoParameters(random);
     require(params.n == 16 && params.k == 16 && params.m == 48,
            "ExperimentalDemoParameters must match its documented shape");

@@ -103,7 +103,7 @@ void test_duplicate_submission_via_real_link_is_still_rejected() {
     require(first.accepted, "first submission must be accepted");
 
     const SubmissionPublicView second =
-        auction.SubmitBid(3, amount_bytes(999), random);
+        auction.SubmitBid(3, amount_bytes(200), random);
     require(!second.accepted,
            "a second submission from the same ring member, with a "
            "DIFFERENT bid amount (and therefore a different LPCom "

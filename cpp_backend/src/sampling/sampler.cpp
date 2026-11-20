@@ -25,10 +25,18 @@ NTL::ZZ sample_uniform_below(const NTL::ZZ& exclusive_upper_bound,
 
     std::vector<unsigned char> bytes(byte_count);
     const unsigned int excess_bits = static_cast<unsigned int>(byte_count * 8 - bit_count);
-    const unsigned char first_byte_mask = static_cast<unsigned char>(0xffU >> excess_bits);
+    const unsigned char high_order_byte_mask =
+        static_cast<unsigned char>(0xffU >> excess_bits);
+    // NTL::ZZFromBytes treats bytes[0] as the LOW-order byte (little-
+    // endian), so the mask that trims the excess high bits must be
+    // applied to bytes.back() (the HIGH-order byte in that layout), not
+    // bytes.front() -- masking the front byte instead (a bug fixed
+    // here) left the high-order byte almost always forced to 0 by the
+    // rejection check below, collapsing the sampled range to a handful
+    // of small values for any modulus that isn't a power of two.
     while (true) {
         random.fill_bytes(bytes.data(), bytes.size());
-        bytes.front() &= first_byte_mask;
+        bytes.back() &= high_order_byte_mask;
         NTL::ZZ candidate;
         NTL::ZZFromBytes(candidate, bytes.data(), static_cast<long>(bytes.size()));
         if (candidate < exclusive_upper_bound) {
