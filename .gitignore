@@ -35,6 +35,7 @@ __pycache__/
 venv/
 env/
 *.egg-info/
+*.pyc
 
 # Local secrets and credentials
 .env
