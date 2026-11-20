@@ -101,6 +101,7 @@ add_library(lattice_lrs_backend STATIC
     src/demo/playground_session.cpp
     src/auction/sealed_bid_auction.cpp
     src/lpcom/lpcom.cpp
+    src/audit/merkle_tree.cpp
 )
 target_include_directories(lattice_lrs_backend PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

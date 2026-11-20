@@ -15,6 +15,11 @@ def _goto_live_auction(at):
     return at
 
 
+def _goto_ot_demo(at):
+    at.sidebar.radio[0].set_value("Private Information Selection (OT Demo)").run()
+    return at
+
+
 def _create_auction(at, name):
     for text_input in at.text_input:
         if text_input.key == "auction_name_input":
@@ -259,3 +264,217 @@ def test_public_log_never_shows_plaintext_amount_or_randomness():
             for column in ("status", "ovk_fingerprint", "reason"):
                 assert not (df[column].astype(str) == "777").any()
     assert found_submission_table, "the submission-history table did not render"
+
+
+def test_ot_demo_page_loads_without_exceptions():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_ot_demo(at)
+    assert not at.exception
+    assert any("SIMULATED OT" in e.value for e in at.error)
+
+
+def test_ot_demo_selection_recovers_chosen_payload():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_ot_demo(at)
+
+    for number_input in at.number_input:
+        if number_input.key == "ot_payload_count":
+            number_input.set_value(3)
+    at.run()
+
+    for text_input in at.text_input:
+        if text_input.key == "ot_payload_1":
+            text_input.set_value("the-chosen-option")
+    for selectbox in at.selectbox:
+        if selectbox.key == "ot_choice_select":
+            selectbox.set_value(1)
+    for button in at.button:
+        if button.key == "ot_run_button":
+            button.click().run()
+            break
+
+    assert not at.exception
+    assert any("the-chosen-option" in s.value for s in at.success)
+    assert any("SUCCESS" in str(t.value) for t in at.table)
+
+
+def _submit_bid_and_get_trustee_buttons(at, auction_name, amount="150"):
+    _create_auction(at, auction_name)
+    for text_input in at.text_input:
+        if text_input.key == "bid_amount_input":
+            text_input.set_value(amount)
+    for button in at.button:
+        if "Submit Anonymous Bid" in button.label:
+            button.click().run()
+            break
+    assert any("ACCEPTED" in s.value for s in at.success)
+    return [b for b in at.button if b.label.startswith("Trustee #")]
+
+
+def test_shamir_threshold_displayed_and_insufficient_before_any_trustee():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _submit_bid_and_get_trustee_buttons(at, "apptest-shamir-display")
+
+    all_markdown = " ".join(str(m.value) for m in at.markdown) + " ".join(
+        str(i.value) for i in at.info)
+    assert "Trustee threshold: 3 of 5" in all_markdown
+    assert any("INSUFFICIENT SHARES" in str(m.value) for m in at.markdown)
+
+    reconstruct = [b for b in at.button if b.key == "settlement_reconstruct_btn"]
+    assert len(reconstruct) == 1
+    assert reconstruct[0].disabled, "reconstruct must be disabled below threshold"
+
+
+def test_shamir_exact_threshold_reconstructs_and_verifies():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _submit_bid_and_get_trustee_buttons(at, "apptest-shamir-exact", amount="200")
+
+    for trustee_number in (1, 2, 3):  # exactly t=3
+        for button in at.button:
+            if button.label == f"Trustee #{trustee_number}":
+                button.click().run()
+                break
+
+    assert not at.exception
+    assert any("THRESHOLD MET" in str(m.value) for m in at.markdown)
+
+    reconstruct = [b for b in at.button if b.key == "settlement_reconstruct_btn"]
+    assert len(reconstruct) == 1
+    assert not reconstruct[0].disabled
+    reconstruct[0].click().run()
+
+    assert not at.exception
+    all_markdown = " ".join(str(m.value) for m in at.markdown)
+    assert "SETTLEMENT AUTHORIZED" in all_markdown
+    assert "Verified bid amount:** `200`" in all_markdown
+
+
+def test_shamir_more_than_threshold_also_reconstructs():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _submit_bid_and_get_trustee_buttons(at, "apptest-shamir-more", amount="77")
+
+    for trustee_number in (1, 2, 3, 4, 5):  # all 5, n > t
+        for button in at.button:
+            if button.label == f"Trustee #{trustee_number}":
+                button.click().run()
+                break
+
+    reconstruct = [b for b in at.button if b.key == "settlement_reconstruct_btn"][0]
+    assert not reconstruct.disabled
+    reconstruct.click().run()
+
+    all_markdown = " ".join(str(m.value) for m in at.markdown)
+    assert "SETTLEMENT AUTHORIZED" in all_markdown
+    assert "Verified bid amount:** `77`" in all_markdown
+
+
+def test_shamir_reconstruct_blocked_below_threshold():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _submit_bid_and_get_trustee_buttons(at, "apptest-shamir-below")
+
+    for trustee_number in (1, 2):  # only 2, below t=3
+        for button in at.button:
+            if button.label == f"Trustee #{trustee_number}":
+                button.click().run()
+                break
+
+    reconstruct = [b for b in at.button if b.key == "settlement_reconstruct_btn"][0]
+    assert reconstruct.disabled, "must stay disabled with fewer than t shares"
+    assert not any("SETTLEMENT AUTHORIZED" in str(m.value) for m in at.markdown)
+
+
+def test_shamir_trustee_button_disabled_after_submission():
+    # A trustee cannot be clicked twice via the UI (duplicate-trustee
+    # rejection is enforced by SettlementTrusteeStore; the UI additionally
+    # disables an already-submitted trustee's button entirely).
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _submit_bid_and_get_trustee_buttons(at, "apptest-shamir-dup")
+
+    for button in at.button:
+        if button.label == "Trustee #1":
+            button.click().run()
+            break
+
+    updated = [b for b in at.button if b.label.startswith("Trustee #1")]
+    assert len(updated) == 1
+    assert updated[0].disabled
+
+
+def test_synopsis_six_step_flow_diagram_renders():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    assert not at.exception
+    all_markdown = " ".join(str(m.value) for m in at.markdown)
+    for step in ["1. Registration", "2. Sealed Bidding", "3. Oblivious Transfer",
+                "4. Threshold Opening", "5. ZK Verification", "6. Public Result"]:
+        assert step in all_markdown
+
+
+def test_step3_ot_in_flow_private_selection_works():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _create_auction(at, "apptest-step3-ot")
+
+    for text_input in at.text_input:
+        if text_input.key == "live_ot_option_1":
+            text_input.set_value("fast-shipping")
+    for selectbox in at.selectbox:
+        if selectbox.key == "live_ot_choice_select":
+            selectbox.set_value(1)
+    for button in at.button:
+        if button.key == "live_ot_run_button":
+            button.click().run()
+            break
+
+    assert not at.exception
+    assert any("fast-shipping" in s.value for s in at.success)
+    assert any("SIMULATED OT" in e.value for e in at.error)
+
+
+def test_step5_zk_verification_marked_not_implemented():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _create_auction(at, "apptest-step5-zk")
+
+    all_warnings = " ".join(str(w.value) for w in at.warning)
+    assert "Not yet implemented" in all_warnings
+    assert any("ZK Verification" in str(m.value) for m in at.markdown)
+
+
+def test_step6_public_result_audit_root_and_inclusion_proof():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    _goto_live_auction(at)
+    _create_auction(at, "apptest-step6-audit")
+
+    for button in at.button:
+        if "Submit Anonymous Bid" in button.label:
+            button.click().run()
+            break
+    assert any("ACCEPTED" in s.value for s in at.success)
+
+    all_markdown = " ".join(str(m.value) for m in at.markdown)
+    assert "Merkle root (public)" in all_markdown
+
+    for button in at.button:
+        if button.key == "audit_verify_button":
+            button.click().run()
+            break
+
+    assert not at.exception
+    assert any("VERIFIED" in str(m.value) for m in at.markdown)

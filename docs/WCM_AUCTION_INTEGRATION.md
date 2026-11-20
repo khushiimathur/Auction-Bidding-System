@@ -245,6 +245,181 @@ Parameters/Limitations tabs of the Streamlit app's Technical Details
 page. They are unrelated to, and not validated the same way as, Esgin's
 named `N64` profile.
 
+## 5b. Shamir-gated threshold settlement
+
+### Shamir's role here, precisely
+
+Shamir does **not** split the bid, the LPCom commitment `c`, or the
+opening `(v, r)` itself. It splits a **fresh, per-submission symmetric
+key `K`**. The opening is encrypted under `K` (AES-256-GCM) immediately
+after a bid is accepted; `K` is what gets Shamir-split across `n`
+settlement trustees with threshold `t`. Recovering the opening requires
+reconstructing `K` from `>= t` trustee shares, then decrypting — the
+math from `shamir_secret_sharing/shamir.py`/`committee.py` (pulled
+verbatim from `origin/feature/shamir-threshold`, unmodified) is used
+only for the key, never for the bid data.
+
+### Difference from LPCom
+
+LPCom (`lpcom::Com`/`Unv`) is what makes a bid *hideable and bindable*
+in the first place — it is the cryptographic commitment itself, proven
+in the Cabarcas et al. paper under its own (experimental, here)
+parameters. Shamir adds a completely separate, later-stage control:
+*who is authorized to even attempt opening it*. LPCom's security
+properties (hiding, binding) are unaffected by whether Shamir-gating
+exists at all; Shamir only decides when the already-computed opening
+becomes retrievable, and requires multiple parties to agree before that
+happens.
+
+### Architecture
+
+```
+SealedBidAuction::SubmitBid (unchanged) -> accepted
+          |
+          v  (app.py, automatically, once, right after acceptance)
+EXPORT_RAW_OPENING (new CLI command) -> (amount, randomness) in Python
+          |
+          v
+settlement_seal.seal_opening(): fresh K (shamir.generate_key, unmodified)
+    -> AES-256-GCM(K, nonce, AAD=auction_id|submission_index|commitment_hex)
+    -> ShamirScheme(t,n).deal_bytes(K) (unmodified) -> n shares
+          |
+          v
+amount/randomness/K discarded; only (ciphertext, nonce) + shares kept
+          |
+          v  (Settlement & Bid Verification page, "Threshold-Authorized
+          |   Settlement (Shamir)")
+>= t simulated trustees "submit" their share (SettlementTrusteeStore)
+          |
+          v
+ShamirScheme(t,n).open_bytes() (unmodified) -> K reconstructed
+          |
+          v
+AES-256-GCM decrypt+authenticate -> (amount, randomness)
+          |
+          v
+VERIFY_SEALED_OPENING (new CLI command) -> SealedBidAuction::VerifyOpening
+    -> real lpcom::Unv against the STORED commitment c
+          |
+          v
+"SETTLEMENT AUTHORIZED" + verified amount shown, ONLY now
+```
+
+### CLI additions (additive only — no existing command's behavior changed)
+
+- `EXPORT_RAW_OPENING <auction_id> <submission_index>` — internal/sealing
+  use only. Returns the full `(amount, randomness)` with no verification
+  gate. More sensitive than the pre-existing `OPEN_BID` (which only
+  returns the amount, already verified). Intended to be called exactly
+  once, automatically, immediately after acceptance; its result is never
+  rendered in the UI.
+- `VERIFY_SEALED_OPENING <auction_id> <submission_index> <amount> <r_0>
+  ... <r_{k-1}>` — verifies an **externally supplied** opening (e.g. one
+  just reconstructed via Shamir + decrypted) against the stored
+  commitment, via the real, unmodified `SealedBidAuction::VerifyOpening`.
+  Does not fall back to, or get satisfied by, this process's own
+  internally stored copy of the randomness.
+
+**On "the old unrestricted reveal path cannot bypass the new threshold
+authorization":** `OPEN_BID` and `VERIFY_BID_AMOUNT` (added in the LPCom
+settlement task, before Shamir existed in this integration) still exist
+and are unchanged — removing them was out of scope here and would
+itself have violated "preserve existing functionality." They are a
+**different, pre-existing code path**, not a backdoor into the new
+Shamir-gated one: nothing in `seal_opening`/`unseal_opening`/
+`VERIFY_SEALED_OPENING` reads from, writes to, or is satisfied by
+anything `OPEN_BID`/`VERIFY_BID_AMOUNT` do. In a real (non-demo)
+deployment adopting threshold settlement, the unrestricted path would
+be the one to remove — that is a deployment decision, not something
+this integration silently did.
+
+### Streamlit additions
+
+"Threshold-Authorized Settlement (Shamir)" subsection of **Settlement &
+Bid Verification**: `t`-of-`n` display, a progress bar, one button per
+simulated trustee (disabled once that trustee has already submitted),
+and a "Reconstruct key & verify opening" button that stays disabled
+below threshold and, once enabled, reconstructs `K`, decrypts, and
+calls `VERIFY_SEALED_OPENING` — showing the verified amount only after
+all of that succeeds.
+
+### Limitations (stated plainly, not fixed in this task)
+
+- **Non-verifiable Shamir.** `shamir_secret_sharing/README.md`'s own
+  "Current limitations" section applies unchanged: a corrupted trustee
+  share is not detected as corrupted by Shamir itself. What this
+  integration adds is that a corrupted share produces the wrong `K`,
+  which then fails AES-GCM authentication on decrypt — a side effect of
+  the AEAD layer around Shamir, not a Shamir verification property. No
+  Verifiable Secret Sharing is implemented here, by design (out of this
+  task's scope).
+- **Single-process simulation.** All `n` trustees are Python objects
+  inside one Streamlit session — there is no network, no independent
+  parties, no real distributed trust boundary. Clicking "Trustee #i"
+  only moves a share within this one process's memory.
+- **Plaintext-to-server, again.** `EXPORT_RAW_OPENING` necessarily
+  exposes the full plaintext opening to this same Python process for
+  the moment it takes to seal it — consistent with, and not a new
+  instance beyond, the centralized-key limitation already documented
+  for LPCom/bid submission itself (§5a above). Sealing does not retroactively
+  hide what this process already saw.
+
+## 5c. Mapping to the project synopsis's Fig. 1 workflow
+
+The synopsis (`Project_Synopsis_Group22`) describes a 6-stage workflow:
+Registration → Sealed Bidding → Oblivious Transfer → Threshold Opening →
+ZK Verification → Public Result. The Live Auction page now walks through
+all six, in order, against the real backend:
+
+| Synopsis stage | Status | Where |
+|---|---|---|
+| 1. Registration | Implemented | Ring formation at auction creation (`RING` command); shown as its own labeled step |
+| 2. Sealed Bidding | Implemented | LPCom commitment + WCM LRS (§5a) |
+| 3. Oblivious Transfer | Implemented (simulated primitive) | `OT/auction_ot_adapter.py`'s `PrivateSelectionSession`, now also invoked in-flow (private fulfillment-option selection), not only on the separate OT Demo page |
+| 4. Threshold Opening | Implemented | Shamir-gated settlement (§5b) |
+| 5. ZK Verification | **Not implemented** | Clearly marked "Not yet implemented" in the UI, with a precise statement of what it would add (a range/max-bid proof over the still-hidden bid) and why Esgin's internal ring-membership ZK proof is a different proof for a different statement |
+| 6. Public Result | Implemented | `cpp_backend/include/lattice_lrs/audit/merkle_tree.hpp` (new), via `AUDIT_ROOT`/`AUDIT_PROOF`/`AUDIT_VERIFY` |
+
+### Merkle/hash-chain audit log (new)
+
+`lattice_lrs::audit::MerkleAuditTree` builds a SHA3-256 Merkle tree
+(same function already linked via the vendored Dilithium `fips202.c`,
+not a new hash primitive) over an auction's PUBLIC submission log —
+`log_index`, `ovk_fingerprint`, `lpcom_commitment_hex`, `accepted`,
+`reason`, nothing else. No existing repository branch had a Merkle
+implementation to reuse (checked: none of the OT, Shamir, or
+ring-signature branches); this module is new, built only from the
+already-linked SHA3 function. It is conceptually SEPARATE from LPCom's
+hiding/binding and Shamir's threshold control — it only proves the
+published log hasn't changed since publication, nothing about what the
+log's entries themselves hide.
+
+CLI: `AUDIT_ROOT <auction_id>`, `AUDIT_PROOF <auction_id> <log_index>`,
+`AUDIT_VERIFY <auction_id> <log_index> <claimed_root>` — all new,
+additive, read-only over the existing `PublicLog()`.
+
+### Oblivious Transfer woven into the live flow (new UI only)
+
+The Live Auction page's "Step 3: Oblivious Transfer" section calls the
+SAME `PrivateSelectionSession` adapter as the dedicated OT Demo page —
+no new OT code, no change to `SimROT`/`Sender`/`Receiver`. It is placed
+between Sealed Bidding and Threshold Opening to match the synopsis's
+own Fig. 1 ordering, and is clearly marked with the same "SIMULATED
+OT — NOT CRYPTOGRAPHICALLY SECURE" disclosure as the standalone page.
+The selection is structurally independent of the bid amount, the LPCom
+commitment, and the LRS signature: nothing in `SubmitBid`, `Com`, or
+`LRSign`/`LRVerify` reads this selection or is affected by it.
+
+### What "end-to-end" means and doesn't mean here
+
+All 6 stages are now reachable from one page, in the synopsis's order,
+against the real backend (not mocks) for every stage except #5. This is
+NOT a claim that the combined pipeline has been analyzed as a single
+security protocol — each stage's own documented assumptions and
+limitations (§3, §5a, §5b, this section) still apply exactly as stated;
+composing working pieces into one flow does not by itself establish a
+new, stronger security property for the whole.
+
 ## 6. Known limitations and cryptographic assumptions
 
 Everything inherited from the base RSign/RVerify integration still applies

@@ -170,6 +170,10 @@ target_link_libraries(sealed_bid_auction_lpcom_test
 add_test(NAME sealed_bid_auction_lpcom_test
     COMMAND sealed_bid_auction_lpcom_test)
 
+add_executable(merkle_audit_tree_test tests/test_merkle_audit_tree.cpp)
+target_link_libraries(merkle_audit_tree_test PRIVATE lattice_lrs_backend)
+add_test(NAME merkle_audit_tree_test COMMAND merkle_audit_tree_test)
+
 add_executable(playground_session_test
     tests/test_playground_session.cpp)
 target_link_libraries(playground_session_test

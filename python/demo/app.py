@@ -23,6 +23,48 @@ DEMO_DIR = Path(__file__).resolve().parent
 REPOSITORY_ROOT = DEMO_DIR.parents[1]
 BUILD_DIR = REPOSITORY_ROOT / "build" / "python_demo"
 
+# OT/ (the existing, unmodified OT prototype pulled from
+# origin/feature/ot-prototype, plus this project's own minimal
+# integration adapter) lives at the repository root, outside
+# python/demo/ -- make it importable without installing it as a
+# package. OT_IMPORT_ERROR is checked by the OT Demo page so a missing
+# `cryptography` dependency degrades to a clear message there instead
+# of crashing the whole app at import time.
+sys.path.insert(0, str(REPOSITORY_ROOT / "OT"))
+OT_IMPORT_ERROR = None
+try:
+    from auction_ot_adapter import PrivateSelectionSession
+except Exception as _ot_import_error:  # noqa: N816
+    PrivateSelectionSession = None
+    OT_IMPORT_ERROR = str(_ot_import_error)
+
+# shamir_secret_sharing/ (the existing, unmodified Shamir implementation
+# pulled from origin/feature/shamir-threshold, plus this project's own
+# minimal settlement_seal.py adapter) -- same pattern as OT/ above.
+sys.path.insert(0, str(REPOSITORY_ROOT / "shamir_secret_sharing"))
+SHAMIR_IMPORT_ERROR = None
+try:
+    from committee import Share
+    from settlement_seal import (
+        SettlementSealError,
+        SettlementTrusteeStore,
+        seal_opening,
+        unseal_opening,
+    )
+except Exception as _shamir_import_error:  # noqa: N816
+    Share = None
+    SettlementSealError = Exception
+    SettlementTrusteeStore = None
+    seal_opening = None
+    unseal_opening = None
+    SHAMIR_IMPORT_ERROR = str(_shamir_import_error)
+
+# Demo-scale threshold: t-of-n settlement trustees. A fixed, disclosed
+# constant (not user-configurable in this demo) -- matches the scale
+# shamir_secret_sharing's own README slide example uses (3-of-5).
+SETTLEMENT_THRESHOLD_T = 3
+SETTLEMENT_TRUSTEE_COUNT_N = 5
+
 SERVER_EXCEPTIONS = (subprocess.CalledProcessError, OSError, RuntimeError,
                     json.JSONDecodeError)
 
@@ -101,6 +143,48 @@ def reset_app():
     if process is not None and process.poll() is None:
         process.terminate()
     st.session_state.clear()
+
+
+# --------------------------------------------------------------------------
+# Shamir-gated settlement sealing. seal_submission_opening() is called
+# AUTOMATICALLY right after a bid is accepted (never from a
+# user-facing "reveal" button) -- it is the one point where this
+# process's own plaintext (v, r) (already held here per this demo's
+# existing centralized-key model) gets encrypted and the key
+# Shamir-split, after which the plaintext is discarded. From this
+# point on, recovering the opening requires >= SETTLEMENT_THRESHOLD_T
+# of the SETTLEMENT_TRUSTEE_COUNT_N simulated trustees to participate
+# -- see the Settlement & Bid Verification section below.
+# --------------------------------------------------------------------------
+
+def seal_submission_opening(auction_id, submission_index, commitment_hex):
+    """Exports the raw opening ONCE via EXPORT_RAW_OPENING, seals it
+    under a fresh Shamir-split key, and stores ONLY the sealed
+    (ciphertext, nonce) record and the trustee shares in
+    st.session_state -- never the plaintext amount or randomness,
+    never the key. Idempotent: does nothing if this (auction_id,
+    submission_index) was already sealed."""
+    if seal_opening is None:
+        return  # Shamir import failed; settlement UI will report why.
+    vault_key = (auction_id, submission_index)
+    if vault_key in st.session_state["shamir_vault"]:
+        return
+    export_response = send_command("EXPORT_RAW_OPENING", auction_id, submission_index)
+    if not export_response.get("ok"):
+        return
+    amount = export_response["amount"]
+    randomness = export_response["randomness"]
+    sealed, shares = seal_opening(
+        auction_id, submission_index, commitment_hex, amount, randomness,
+        t=SETTLEMENT_THRESHOLD_T, n=SETTLEMENT_TRUSTEE_COUNT_N)
+    # amount/randomness go out of scope here and are not stored anywhere.
+    st.session_state["shamir_vault"][vault_key] = {
+        "sealed": sealed,
+        "vault_shares": {share.x: share for share in shares},
+        "store": SettlementTrusteeStore(
+            auction_id, submission_index,
+            SETTLEMENT_THRESHOLD_T, SETTLEMENT_TRUSTEE_COUNT_N),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -303,6 +387,10 @@ for key, default in [
     ("pg_link_result", None),
     ("illus_result", None),
     ("link_demo_result", None),
+    ("shamir_vault", {}),
+    ("shamir_reconstruct_result", {}),
+    ("live_ot_result", None),
+    ("audit_proof_result", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -321,6 +409,7 @@ with st.sidebar:
             "Linkability",
             "Cryptographic Playground",
             "Live Auction",
+            "Private Information Selection (OT Demo)",
             "Technical Details",
         ],
         label_visibility="collapsed",
@@ -710,6 +799,36 @@ elif page == "Live Auction":
         "signing and verification, and real duplicate detection via `Link`."
     )
 
+    synopsis_steps = [
+        ("1. Registration", True),
+        ("2. Sealed Bidding", True),
+        ("3. Oblivious Transfer", True),
+        ("4. Threshold Opening", True),
+        ("5. ZK Verification", False),
+        ("6. Public Result", True),
+    ]
+    synopsis_html = '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0 4px;">'
+    for i, (label, implemented) in enumerate(synopsis_steps):
+        border = PALETTE["accent"] if implemented else PALETTE["panel_border"]
+        text_color = PALETTE["text"] if implemented else PALETTE["text_dim"]
+        suffix = "" if implemented else " (planned)"
+        synopsis_html += (
+            f'<div class="pq-card" style="flex:1; min-width:130px; padding:10px 10px; '
+            f'text-align:center; border-color:{border};">'
+            f'<p style="color:{text_color}; font-size:11.5px; font-weight:600; margin:0;">'
+            f'{label}{suffix}</p></div>'
+        )
+        if i != len(synopsis_steps) - 1:
+            synopsis_html += f'<div style="font-size:16px; color:{PALETTE["text_dim"]};">→</div>'
+    synopsis_html += "</div>"
+    st.markdown(synopsis_html, unsafe_allow_html=True)
+    st.caption(
+        "This page walks through all six stages of the project synopsis's "
+        "workflow (Fig. 1), in order, against the real backend. Step 5 (ZK "
+        "range/max-bid proof) is the one stage not yet implemented — see "
+        "its own section below for exactly what's missing and why."
+    )
+
     try:
         auctions_response = send_command("AUCTIONS")
         known_auctions = (
@@ -793,6 +912,14 @@ elif page == "Live Auction":
         except SERVER_EXCEPTIONS:
             ring_fingerprints = []
 
+        st.markdown("#### Step 1: Registration")
+        st.caption(
+            "Each eligible bidder's key pair is generated and registered into "
+            "the ring at auction creation — the synopsis's ML-DSA registration "
+            "step; this prototype uses the equivalent WCM/Esgin lattice key "
+            "pair + Dilithium5 one-time key (see Technical Details for the "
+            "exact provenance note)."
+        )
         with st.expander(f"Ring formation — {len(ring_fingerprints) or 8} fixed public keys"):
             st.caption(
                 "Generated once, at auction creation, before any bid. This is the "
@@ -801,7 +928,9 @@ elif page == "Live Auction":
             if ring_fingerprints:
                 st.table([{"ring_index": i, "fingerprint": fp} for i, fp in enumerate(ring_fingerprints)])
 
-        st.markdown("#### Submit an Anonymous Bid")
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("#### Step 2: Sealed Bidding")
+        st.caption("Submit an Anonymous Bid")
         st.caption(
             "What actually happens on submit: (1) the backend generates an "
             "**LPCom commitment** to your bid amount, (2) your linkable ring "
@@ -849,6 +978,32 @@ elif page == "Live Auction":
                             "not the plaintext bid amount — a verifier only ever "
                             "sees the commitment, never the amount, until settlement."
                         )
+
+                        # Automatic sealing: the opening is exported
+                        # EXACTLY ONCE here, encrypted, Shamir-split,
+                        # and the plaintext is discarded -- never
+                        # exposed via a button, never shown in this
+                        # flow. submission_index is this submission's
+                        # position among ACCEPTED submissions so far
+                        # (matches RevealOpening/VerifyOpening's own
+                        # acceptance-order indexing).
+                        try:
+                            list_after_bid = send_command("LIST", active_auction_id)
+                            accepted_so_far = [
+                                s for s in list_after_bid.get("submissions", [])
+                                if s["accepted"]
+                            ]
+                            new_submission_index = len(accepted_so_far) - 1
+                            seal_submission_opening(
+                                active_auction_id, new_submission_index,
+                                submission["lpcom_commitment_hex"])
+                            st.caption(
+                                f"Opening sealed under a {SETTLEMENT_THRESHOLD_T}-of-"
+                                f"{SETTLEMENT_TRUSTEE_COUNT_N} Shamir threshold — see "
+                                "Settlement & Bid Verification below."
+                            )
+                        except SERVER_EXCEPTIONS as error:
+                            st.warning(f"Settlement sealing failed: {error_detail(error)}")
                     else:
                         st.error("SUBMISSION REJECTED")
                         if "duplicate" in submission["reason"]:
@@ -956,10 +1111,72 @@ elif page == "Live Auction":
         )
 
         # ------------------------------------------------------------------
-        # Settlement & Bid Verification
+        # Step 3: Oblivious Transfer (private lot/fulfillment selection)
         # ------------------------------------------------------------------
         st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
-        st.markdown("### Settlement & Bid Verification")
+        st.markdown("#### Step 3: Oblivious Transfer — Private Fulfillment Selection")
+        st.error(
+            "**SIMULATED OT — NOT CRYPTOGRAPHICALLY SECURE** (same `SimROT` "
+            "trusted-dealer simulator as the dedicated OT Demo page — see "
+            "that page, or `OT/ot_layer_demo.py`, for the full disclosure). "
+            "Shown here, in context, because the synopsis's workflow places "
+            "OT between bidding and settlement, not as an unrelated demo."
+        )
+        st.caption(
+            "A winning bidder privately selects ONE fulfillment option (e.g. "
+            "a delivery slot) out of N, using the SAME real 1-out-of-N OT "
+            "interface as the dedicated OT Demo page — the auctioneer "
+            "(sender) never learns which index was chosen; this is entirely "
+            "separate from the bid amount, the LPCom commitment, and WCM "
+            "signing above."
+        )
+        if PrivateSelectionSession is None:
+            st.warning(f"OT module unavailable: {OT_IMPORT_ERROR}")
+        else:
+            ot_flow_col1, ot_flow_col2 = st.columns(2)
+            with ot_flow_col1:
+                ot_flow_option_count = st.number_input(
+                    "Number of fulfillment options (N)", min_value=2, max_value=8,
+                    value=3, step=1, key="live_ot_option_count")
+                ot_flow_options = [
+                    st.text_input(f"Option {i}", value=f"delivery-slot-{i}",
+                                 key=f"live_ot_option_{i}")
+                    for i in range(int(ot_flow_option_count))
+                ]
+            with ot_flow_col2:
+                ot_flow_choice = st.selectbox(
+                    "Bidder's private choice", options=list(range(int(ot_flow_option_count))),
+                    key="live_ot_choice_select")
+                if st.button("Run private selection (OT)", key="live_ot_run_button"):
+                    try:
+                        session = PrivateSelectionSession(
+                            [text.encode("utf-8") for text in ot_flow_options])
+                        result = session.select(int(ot_flow_choice))
+                        st.session_state["live_ot_result"] = {
+                            "auction_id": active_auction_id,
+                            "selected": result["selected_payload"],
+                        }
+                    except ValueError as error:
+                        st.error(f"Invalid input: {error}")
+
+            ot_flow_result = st.session_state.get("live_ot_result")
+            if ot_flow_result and ot_flow_result["auction_id"] == active_auction_id:
+                st.success(
+                    "Privately selected fulfillment option: "
+                    f"`{ot_flow_result['selected'].decode('utf-8', errors='replace')}`"
+                )
+                st.caption(
+                    "This selection is independent of the bid commitment and "
+                    "signature above — it demonstrates the synopsis's OT "
+                    "stage in context, not a cryptographic dependency "
+                    "between OT and LPCom/WCM."
+                )
+
+        # ------------------------------------------------------------------
+        # Step 4: Settlement & Bid Verification (Threshold Opening)
+        # ------------------------------------------------------------------
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("### Step 4: Settlement & Bid Verification (Threshold Opening)")
         st.caption(
             "A separate, later stage: opening a commitment to check it against "
             "the bid amount actually recorded. This is never run during bidding, "
@@ -1033,9 +1250,356 @@ elif page == "Live Auction":
                     except SERVER_EXCEPTIONS as error:
                         st.error(f"Backend error: {error_detail(error)}")
 
+            # --------------------------------------------------------------
+            # Threshold-Authorized Settlement (Shamir)
+            # --------------------------------------------------------------
+            st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+            st.markdown("##### Threshold-Authorized Settlement (Shamir)")
+            st.info(
+                f"**Trustee threshold: {SETTLEMENT_THRESHOLD_T} of "
+                f"{SETTLEMENT_TRUSTEE_COUNT_N}.** Each accepted bid's opening "
+                "is encrypted under a fresh key immediately after acceptance; "
+                "that key is split into "
+                f"{SETTLEMENT_TRUSTEE_COUNT_N} Shamir shares, one per "
+                "trustee. No single trustee — and no fewer than "
+                f"{SETTLEMENT_THRESHOLD_T} of them together — can reconstruct "
+                "the key or recover the opening below. **This is a "
+                "single-process simulation**: all trustees are Python objects "
+                "in this one session, not independent parties on a network — "
+                "see Technical Details."
+            )
+            if SettlementTrusteeStore is None:
+                st.warning(f"Shamir module unavailable: {SHAMIR_IMPORT_ERROR}")
+            elif not accepted_options:
+                st.caption("No accepted submissions to seal yet.")
+            else:
+                threshold_target = st.selectbox(
+                    "Accepted submission",
+                    options=accepted_options,
+                    format_func=lambda pair: f"#{pair[0]} — ovk {pair[1]}",
+                    key="settlement_threshold_select",
+                )
+                vault_key = (active_auction_id, threshold_target[0])
+                vault_entry = st.session_state["shamir_vault"].get(vault_key)
+                if vault_entry is None:
+                    st.caption(
+                        "This submission was not sealed (sealing happens "
+                        "automatically right after acceptance). Nothing to "
+                        "reconstruct."
+                    )
+                else:
+                    store = vault_entry["store"]
+                    collected = store.collected_count()
+                    st.progress(min(collected / SETTLEMENT_THRESHOLD_T, 1.0))
+                    if store.threshold_met():
+                        st.markdown(badge(
+                            f"THRESHOLD MET — {collected}/{SETTLEMENT_THRESHOLD_T} "
+                            "trustees", "good"), unsafe_allow_html=True)
+                    else:
+                        st.markdown(badge(
+                            f"INSUFFICIENT SHARES — {collected}/"
+                            f"{SETTLEMENT_THRESHOLD_T} trustees", "neutral"),
+                            unsafe_allow_html=True)
+
+                    st.caption("Simulate trustee participation (click to submit that trustee's share):")
+                    trustee_cols = st.columns(SETTLEMENT_TRUSTEE_COUNT_N)
+                    for trustee_id in range(1, SETTLEMENT_TRUSTEE_COUNT_N + 1):
+                        with trustee_cols[trustee_id - 1]:
+                            already_in = trustee_id in {s.x for s in store.shares()}
+                            if st.button(
+                                f"Trustee #{trustee_id}" + (" ✓" if already_in else ""),
+                                key=f"trustee_submit_{vault_key}_{trustee_id}",
+                                disabled=already_in,
+                            ):
+                                try:
+                                    store.submit_share(
+                                        trustee_id, vault_entry["vault_shares"][trustee_id])
+                                    st.rerun()
+                                except SettlementSealError as error:
+                                    st.error(str(error))
+
+                    reconstruct_disabled = not store.threshold_met()
+                    if st.button(
+                        "Reconstruct key & verify opening",
+                        key="settlement_reconstruct_btn",
+                        disabled=reconstruct_disabled,
+                        type="primary",
+                    ):
+                        try:
+                            amount, randomness = unseal_opening(
+                                vault_entry["sealed"], store.shares(),
+                                SETTLEMENT_THRESHOLD_T, SETTLEMENT_TRUSTEE_COUNT_N)
+                            verify_response = send_command(
+                                "VERIFY_SEALED_OPENING", active_auction_id,
+                                threshold_target[0], amount, *randomness)
+                            # amount/randomness are not stored anywhere past
+                            # this point -- only the verify outcome is kept.
+                            st.session_state["shamir_reconstruct_result"][vault_key] = {
+                                "verified": verify_response.get("ok") and verify_response.get("verified"),
+                                "amount": amount if verify_response.get("ok") else None,
+                                "error": None if verify_response.get("ok") else verify_response.get("error"),
+                            }
+                        except SettlementSealError as error:
+                            st.session_state["shamir_reconstruct_result"][vault_key] = {
+                                "verified": False, "amount": None, "error": str(error),
+                            }
+                        except SERVER_EXCEPTIONS as error:
+                            st.session_state["shamir_reconstruct_result"][vault_key] = {
+                                "verified": False, "amount": None,
+                                "error": error_detail(error),
+                            }
+
+                    reconstruct_result = st.session_state["shamir_reconstruct_result"].get(vault_key)
+                    if reconstruct_result:
+                        if reconstruct_result["verified"]:
+                            st.markdown(badge("SETTLEMENT AUTHORIZED — opening verified", "good"),
+                                      unsafe_allow_html=True)
+                            st.markdown(f"**Verified bid amount:** `{reconstruct_result['amount']}`")
+                        else:
+                            st.markdown(badge("SETTLEMENT REJECTED", "bad"), unsafe_allow_html=True)
+                            if reconstruct_result["error"]:
+                                st.caption(f"Detail: {reconstruct_result['error']}")
+                        st.caption(
+                            "This result came from reconstructing the key from "
+                            f"{SETTLEMENT_THRESHOLD_T}+ trustee shares, decrypting "
+                            "the sealed opening, and verifying it against the "
+                            "real stored LPCom commitment via VerifyOpening — not "
+                            "from the unrestricted Reveal/Claimed-amount controls above."
+                        )
+
+        # ------------------------------------------------------------------
+        # Step 5: ZK Verification — NOT YET IMPLEMENTED
+        # ------------------------------------------------------------------
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("#### Step 5: ZK Verification")
+        st.warning(
+            "**Not yet implemented.** The synopsis calls for a lattice-based "
+            "zero-knowledge proof that a bid lies within a valid range, and/or "
+            "that it is the maximum bid, without revealing any other bid's "
+            "value (see Lyubashevsky–Nguyen–Seiler, CCS 2020, and the "
+            "synopsis's own Objective 6 / Risks table). No such proof exists "
+            "anywhere in this codebase — this section is shown so the "
+            "end-to-end flow stays honest about what is and isn't built, "
+            "rather than silently skipping the step."
+        )
+        st.caption(
+            "What this would add, concretely: today, `Unv` (LPCom opening "
+            "verification, Step 4 above) proves the REVEALED amount matches "
+            "the commitment — but only after threshold settlement reveals "
+            "it. A ZK range/max-bid proof would let a bidder prove properties "
+            "of their STILL-HIDDEN bid (e.g. \"this bid is below the reserve "
+            "cap\") before any reveal, without a verifier learning the value. "
+            "Esgin's ring signature already contains a one-out-of-many ZK "
+            "proof internally (ring membership) — that is a different proof, "
+            "for a different statement, and does not substitute for this one."
+        )
+
+        # ------------------------------------------------------------------
+        # Step 6: Public Result (Merkle / hash-chain audit log)
+        # ------------------------------------------------------------------
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("#### Step 6: Public Result — Audit Log")
+        st.caption(
+            "A tamper-evident, time-ordered record over the PUBLIC submission "
+            "log only — never bid amounts, opening randomness, or bidder "
+            "identity (see `cpp_backend/include/lattice_lrs/audit/merkle_tree.hpp` "
+            "for exactly what each leaf hashes). Conceptually separate from "
+            "LPCom's hiding/binding and from Shamir's threshold control: this "
+            "only proves the published log hasn't been altered since publication."
+        )
+        try:
+            audit_root_response = send_command("AUDIT_ROOT", active_auction_id)
+        except SERVER_EXCEPTIONS as error:
+            audit_root_response = {"ok": False, "error": error_detail(error)}
+
+        if audit_root_response.get("ok"):
+            st.markdown(
+                f'<div class="pq-card"><h4>Merkle root (public)</h4>'
+                f'<p class="pq-mono" style="word-break:break-all;">{audit_root_response["root"]}</p>'
+                f'<p style="margin-top:8px;">Over {audit_root_response["record_count"]} '
+                f'log entries (accepted and rejected).</p></div>',
+                unsafe_allow_html=True,
+            )
+
+            audit_col1, audit_col2 = st.columns(2)
+            with audit_col1:
+                audit_index = st.number_input(
+                    "Log entry index to prove", min_value=0,
+                    max_value=max(audit_root_response["record_count"] - 1, 0),
+                    value=0, step=1, key="audit_proof_index")
+                if st.button("Get inclusion proof", key="audit_proof_button"):
+                    try:
+                        proof_response = send_command(
+                            "AUDIT_PROOF", active_auction_id, int(audit_index))
+                        st.session_state["audit_proof_result"] = proof_response
+                    except SERVER_EXCEPTIONS as error:
+                        st.error(f"Backend error: {error_detail(error)}")
+
+                proof_result = st.session_state.get("audit_proof_result")
+                if proof_result and proof_result.get("ok"):
+                    st.json(proof_result["proof"])
+
+            with audit_col2:
+                st.caption("Verify a claimed root against this entry (an independent-verifier check):")
+                claimed_root_input = st.text_input(
+                    "Claimed root (hex)", value=audit_root_response["root"],
+                    key="audit_claimed_root")
+                if st.button("Verify inclusion", key="audit_verify_button"):
+                    try:
+                        verify_response = send_command(
+                            "AUDIT_VERIFY", active_auction_id, int(audit_index),
+                            claimed_root_input)
+                        if verify_response.get("ok") and verify_response.get("verified"):
+                            st.markdown(badge("VERIFIED — entry is in this log under this root", "good"),
+                                      unsafe_allow_html=True)
+                        else:
+                            st.markdown(badge("NOT VERIFIED", "bad"), unsafe_allow_html=True)
+                    except SERVER_EXCEPTIONS as error:
+                        st.error(f"Backend error: {error_detail(error)}")
+        else:
+            st.caption("No submissions yet — the audit log needs at least one entry.")
+
 
 # ==========================================================================
-# 6. Technical Details
+# 7. Private Information Selection (OT Demo)
+# ==========================================================================
+
+elif page == "Private Information Selection (OT Demo)":
+    st.title("Private Information Selection (OT Demo)")
+    st.error(
+        "**SIMULATED OT — NOT CRYPTOGRAPHICALLY SECURE.** The underlying "
+        "selection logic here uses `SimROT`, a trusted-dealer simulator "
+        "pulled unmodified from this repository's own "
+        "`feature/ot-prototype` branch (`OT/ot_layer_demo.py`). It "
+        "demonstrates the SELECTION interface a real Oblivious Transfer "
+        "protocol would expose — it does **not** provide OT's actual "
+        "security property (hiding the receiver's choice from the "
+        "sender). Do not treat any result on this page as evidence of "
+        "real cryptographic privacy."
+    )
+    st.caption(
+        "Deliberately separate from the auction's real cryptographic flow: "
+        "this page imports nothing from the LPCom/Esgin/WCM/Shamir code, "
+        "and nothing in the real bid-submission path imports this page's "
+        "module either. The auctioneer plays the OT **sender**; the "
+        "bidder plays the OT **receiver**."
+    )
+
+    if PrivateSelectionSession is None:
+        st.warning(
+            "This page's dependency, `cryptography` (required by the "
+            "existing OT prototype's HKDF/AES-GCM layer), is not "
+            f"installed: {OT_IMPORT_ERROR}. Run `pip install -r "
+            "requirements.txt` in `python/demo/` and reload."
+        )
+        st.stop()
+
+    with st.expander("How this works (existing protocol, unmodified)", expanded=False):
+        st.markdown(
+            "1. The auctioneer (sender) prepares **N** payloads.\n"
+            "2. The bidder (receiver) privately chooses an index **c**.\n"
+            "3. The receiver sends `d_i = c_i XOR r_i` for each of the "
+            "ℓ = ⌈log₂N⌉ underlying 1-out-of-2 OTs (bit-decomposition).\n"
+            "4. The sender derives a separate key per index (HKDF-SHA256) "
+            "and encrypts every payload (AES-256-GCM).\n"
+            "5. The receiver can only derive the key for index **c** — "
+            "every other payload fails AEAD authentication.\n\n"
+            "Steps 3-5 are real, working code (`OT/ot_layer_demo.py`, "
+            "unmodified). Step 3's `r_i` and the per-step keys come from "
+            "`SimROT` — a trusted dealer, not a real OT — which is the "
+            "part that would need to be a genuine base OT before this "
+            "page's result meant anything cryptographically."
+        )
+
+    sender_col, receiver_col = st.columns(2, gap="large")
+    with sender_col:
+        st.markdown("#### 1. Auctioneer (sender) — prepare payloads")
+        payload_count = st.number_input(
+            "Number of options (N)", min_value=2, max_value=16, value=4, step=1,
+            key="ot_payload_count")
+        payload_texts = []
+        for i in range(int(payload_count)):
+            payload_texts.append(st.text_input(
+                f"Option {i}", value=f"lot-{i}-details", key=f"ot_payload_{i}"))
+
+    with receiver_col:
+        st.markdown("#### 2. Bidder (receiver) — choose privately")
+        choice = st.selectbox(
+            "Selection (c)", options=list(range(int(payload_count))),
+            key="ot_choice_select")
+        st.caption(
+            "In a REAL OT protocol, the auctioneer would never learn this "
+            "value. SimROT does not provide that guarantee — it is shown "
+            "here only because this is a single-process demo, not a "
+            "claim that the sender role above actually stays blind to it."
+        )
+        run_ot = st.button("Run 1-out-of-N selection", type="primary",
+                          key="ot_run_button")
+
+    if run_ot:
+        try:
+            payload_bytes = [text.encode("utf-8") for text in payload_texts]
+            session = PrivateSelectionSession(payload_bytes)
+            result = session.select(int(choice))
+            st.session_state["ot_last_result"] = result
+        except ValueError as error:
+            st.error(f"Invalid input: {error}")
+        except Exception as error:  # noqa: BLE001 -- surface any real failure, not just ValueError
+            st.error(f"OT exchange failed: {error}")
+
+    result = st.session_state.get("ot_last_result")
+    if result:
+        st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+        st.markdown("#### 3. Result")
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Options (N)", result["N"])
+        metric_cols[1].metric("Binary OT instances (ℓ)", result["l"])
+        metric_cols[2].metric("Selected index (c)", result["choice"])
+
+        selected = result["selected_payload"]
+        if selected is not None:
+            st.success(
+                "Selected payload recovered: "
+                f"`{selected.decode('utf-8', errors='replace')}`"
+            )
+        else:
+            st.error("Selected payload failed to decrypt — this should not happen for a correct choice.")
+
+        st.markdown("**Per-option authentication outcome**")
+        st.table([
+            {
+                "index": o["index"],
+                "outcome": ("SUCCESS — selected payload recovered" if o["index"] == result["choice"]
+                           else "Rejected — authentication failed" if o["status"] == "auth_failed"
+                           else "Unexpected success — investigate"),
+            }
+            for o in result["outcomes"]
+        ])
+        st.caption(
+            "Every option other than the selected one failing authentication "
+            "demonstrates the existing key-separation logic working correctly "
+            "(the same thing `ot_layer_demo.py`'s own self-test confirms) — "
+            "it is not, by itself, evidence that the receiver's CHOICE stayed "
+            "hidden from the sender, which is what a real OT would need to "
+            "additionally guarantee."
+        )
+
+    st.markdown("<hr class='pq-divider'>", unsafe_allow_html=True)
+    st.markdown("#### Future replacement compatibility")
+    st.caption(
+        "This page only calls `PrivateSelectionSession` (OT/auction_ot_adapter.py). "
+        "That adapter only calls the existing `Sender`/`Receiver`/`SimROT` "
+        "classes from `OT/ot_layer_demo.py`. Swapping `SimROT` for a real "
+        "base OT or OT extension (e.g. one of the vendored implementations "
+        "under `softspoken-implementation/` on the `feature/ot-prototype` "
+        "branch) means changing ONLY `ot_layer_demo.py`'s `SimROT` class "
+        "(or what `auction_ot_adapter.py` constructs in its place) — this "
+        "page and the adapter's public interface would not need to change."
+    )
+
+
+# ==========================================================================
+# 8. Technical Details
 # ==========================================================================
 
 elif page == "Technical Details":

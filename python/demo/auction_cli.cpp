@@ -15,6 +15,21 @@
 //   VERIFY_BID_AMOUNT <auction_id> <submission_index> <claimed_amount>
 //       (settlement-stage: verify a CLAIMED amount, real stored
 //       randomness, against the real stored commitment)
+//   EXPORT_RAW_OPENING <auction_id> <submission_index>  (SEALING USE
+//       ONLY: full (amount, randomness), no verification -- see
+//       shamir_secret_sharing/settlement_seal.py)
+//   VERIFY_SEALED_OPENING <auction_id> <submission_index> <amount>
+//       <r_0> <r_1> ... <r_{k-1}>  (verify an EXTERNALLY supplied
+//       opening, e.g. Shamir-reconstructed, independent of this
+//       process's own stored randomness)
+//   AUDIT_ROOT <auction_id>  (Merkle root over the auction's public
+//       submission log -- synopsis's "Public Result" / audit step)
+//   AUDIT_PROOF <auction_id> <log_index>  (inclusion proof for one
+//       public log entry; log_index indexes the FULL public log,
+//       accepted and rejected entries alike, same order LIST prints)
+//   AUDIT_VERIFY <auction_id> <log_index> <root_hex>  (recomputes that
+//       entry's proof and checks it against a claimed root -- an
+//       independent-verifier-style check, not a trust-me response)
 //   LIST <auction_id>
 //   RING <auction_id>
 //   AUCTIONS
@@ -34,6 +49,7 @@
 // ring/keys; calling it again discards the previous playground session
 // entirely (any earlier signature ids become invalid).
 
+#include "lattice_lrs/audit/merkle_tree.hpp"
 #include "lattice_lrs/auction/sealed_bid_auction.hpp"
 #include "lattice_lrs/demo/playground_session.hpp"
 #include "lattice_lrs/sampling/random_source.hpp"
@@ -97,6 +113,26 @@ TamperMode parse_tamper_mode(const std::string& text) {
     if (text == "signature") return TamperMode::Signature;
     if (text == "ring") return TamperMode::Ring;
     return TamperMode::None;
+}
+
+// Builds the audit::AuditRecord list for one auction's CURRENT public
+// log, in the exact order LIST prints it (accepted and rejected
+// entries alike). Only already-public SubmissionPublicView fields are
+// used -- no bidder identity, amount, or opening material.
+std::vector<audit::AuditRecord> build_audit_records(
+    const std::vector<SubmissionPublicView>& log) {
+    std::vector<audit::AuditRecord> records;
+    records.reserve(log.size());
+    for (std::size_t i = 0; i < log.size(); ++i) {
+        audit::AuditRecord record;
+        record.log_index = i;
+        record.ovk_fingerprint = log[i].ovk_fingerprint;
+        record.lpcom_commitment_hex = log[i].lpcom_commitment_hex;
+        record.accepted = log[i].accepted;
+        record.reason = log[i].reason;
+        records.push_back(std::move(record));
+    }
+    return records;
 }
 
 }  // namespace
@@ -243,6 +279,198 @@ int main() {
             } catch (const std::exception& error) {
                 write_error(std::string("verification failed: ") +
                            error.what());
+            }
+            continue;
+        }
+
+        if (command == "EXPORT_RAW_OPENING") {
+            // INTERNAL/SEALING USE ONLY -- more sensitive than OPEN_BID:
+            // returns the FULL opening (amount AND randomness r, not
+            // just amount) with NO verification gate at all. This
+            // exists for exactly one caller pattern: a sealing step
+            // that runs ONCE, immediately after a bid is accepted,
+            // to encrypt (v, r) under a fresh key and Shamir-split
+            // that key across settlement trustees (see
+            // shamir_secret_sharing/settlement_seal.py) -- after
+            // which the caller MUST discard the plaintext this
+            // command returns. This command does not itself enforce
+            // that discipline (the CLI has no notion of "called
+            // exactly once"); it is the caller's responsibility, and
+            // the Streamlit integration calls this automatically
+            // right after acceptance, never from a user-facing button,
+            // and never renders its result.
+            std::string auction_id;
+            std::size_t submission_index = 0;
+            tokens >> auction_id >> submission_index;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            try {
+                const lpcom::Opening opening =
+                    iterator->second.RevealOpening(submission_index);
+                std::cout << "{\"ok\":true,\"submission_index\":"
+                          << submission_index << ",\"amount\":"
+                          << opening.v[0] << ",\"randomness\":[";
+                for (std::size_t i = 0; i < opening.r.size(); ++i) {
+                    if (i != 0) std::cout << ',';
+                    std::cout << opening.r[i];
+                }
+                std::cout << "]}" << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("export failed: ") + error.what());
+            }
+            continue;
+        }
+
+        if (command == "VERIFY_SEALED_OPENING") {
+            // SETTLEMENT-STAGE: verifies an EXTERNALLY SUPPLIED (amount,
+            // randomness) pair -- e.g. one recovered via Shamir
+            // threshold reconstruction and AES-GCM decryption in
+            // shamir_secret_sharing/settlement_seal.py -- against
+            // submission_index's STORED commitment, via the real
+            // lpcom::Unv (SealedBidAuction::VerifyOpening), completely
+            // independent of whatever this process's own internally
+            // stored copy of r is. This is the command that makes
+            // Shamir-gated settlement meaningful: it does not fall
+            // back to, or get satisfied by, the internally stored
+            // opening at all.
+            std::string auction_id;
+            std::size_t submission_index = 0;
+            std::string claimed_amount;
+            tokens >> auction_id >> submission_index >> claimed_amount;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            if (claimed_amount.empty() ||
+                claimed_amount.find_first_not_of("0123456789") !=
+                    std::string::npos) {
+                write_error(
+                    "claimed_amount must be a non-negative decimal integer");
+                continue;
+            }
+            std::vector<NTL::ZZ> claimed_randomness;
+            std::string token;
+            bool malformed_randomness = false;
+            while (tokens >> token) {
+                if (token.empty() ||
+                    token.find_first_not_of("0123456789") != std::string::npos) {
+                    malformed_randomness = true;
+                    break;
+                }
+                std::istringstream value_stream(token);
+                NTL::ZZ value;
+                value_stream >> value;
+                claimed_randomness.push_back(value);
+            }
+            if (malformed_randomness) {
+                write_error("randomness values must be non-negative decimal integers");
+                continue;
+            }
+            try {
+                std::istringstream amount_stream(claimed_amount);
+                NTL::ZZ amount_zz;
+                amount_stream >> amount_zz;
+                lpcom::Opening opening;
+                opening.v = {amount_zz};
+                opening.r = claimed_randomness;
+                const bool verified =
+                    iterator->second.VerifyOpening(submission_index, opening);
+                std::cout << "{\"ok\":true,\"submission_index\":"
+                          << submission_index << ",\"verified\":"
+                          << (verified ? "true" : "false") << "}"
+                          << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("sealed-opening verification failed: ") +
+                           error.what());
+            }
+            continue;
+        }
+
+        if (command == "AUDIT_ROOT") {
+            // Public-result / audit step: a Merkle root over the
+            // auction's CURRENT public log (accepted and rejected
+            // entries both included, matching LIST's own order). Real
+            // SHA3-256 over real public fields -- see merkle_tree.hpp
+            // for exactly what is and is not hashed.
+            std::string auction_id;
+            tokens >> auction_id;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            try {
+                const auto records = build_audit_records(iterator->second.PublicLog());
+                const audit::MerkleAuditTree tree(records);
+                std::cout << "{\"ok\":true,\"root\":\""
+                          << json_escape(tree.RootHex()) << "\",\"record_count\":"
+                          << records.size() << "}" << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("audit root failed: ") + error.what());
+            }
+            continue;
+        }
+
+        if (command == "AUDIT_PROOF") {
+            std::string auction_id;
+            std::size_t log_index = 0;
+            tokens >> auction_id >> log_index;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            try {
+                const auto records = build_audit_records(iterator->second.PublicLog());
+                const audit::MerkleAuditTree tree(records);
+                const auto proof = tree.ProofFor(log_index);
+                std::cout << "{\"ok\":true,\"log_index\":" << log_index
+                          << ",\"root\":\"" << json_escape(tree.RootHex())
+                          << "\",\"proof\":[";
+                for (std::size_t i = 0; i < proof.size(); ++i) {
+                    if (i != 0) std::cout << ',';
+                    std::cout << "{\"sibling_hash\":\""
+                              << audit::MerkleAuditTree::HashToHex(proof[i].sibling_hash)
+                              << "\",\"sibling_is_left\":"
+                              << (proof[i].sibling_is_left ? "true" : "false") << "}";
+                }
+                std::cout << "]}" << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("audit proof failed: ") + error.what());
+            }
+            continue;
+        }
+
+        if (command == "AUDIT_VERIFY") {
+            // Recomputes log_index's own record from the CURRENT
+            // public log and a FRESH proof, then checks both against
+            // the CALLER-SUPPLIED root -- an independent-verifier-style
+            // check (does this entry really belong under this root?),
+            // not a tautological "yes" using the same tree's own root.
+            std::string auction_id;
+            std::size_t log_index = 0;
+            std::string claimed_root;
+            tokens >> auction_id >> log_index >> claimed_root;
+            auto iterator = auctions.find(auction_id);
+            if (iterator == auctions.end()) {
+                write_error("no such auction");
+                continue;
+            }
+            try {
+                const auto records = build_audit_records(iterator->second.PublicLog());
+                const audit::MerkleAuditTree tree(records);
+                const auto proof = tree.ProofFor(log_index);
+                const bool verified = audit::MerkleAuditTree::VerifyProof(
+                    records[log_index], proof, claimed_root);
+                std::cout << "{\"ok\":true,\"log_index\":" << log_index
+                          << ",\"verified\":" << (verified ? "true" : "false")
+                          << "}" << std::endl;
+            } catch (const std::exception& error) {
+                write_error(std::string("audit verification failed: ") + error.what());
             }
             continue;
         }
